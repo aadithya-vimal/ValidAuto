@@ -3,7 +3,8 @@ import time
 import datetime
 import numpy as np
 import cv2
-from PIL import Image
+import base64
+from PIL import Image, ImageOps
 from io import BytesIO
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -11,8 +12,8 @@ import tensorflow as tf
 
 app = FastAPI(
     title="ValidAuto Inspection API",
-    description="Multi-stage neural pipeline for vehicle inspection",
-    version="3.1.0"
+    description="Multi-stage neural pipeline with image enhancement and Grad-CAM explainability",
+    version="5.0.0"
 )
 
 # CORS configurations
@@ -86,60 +87,245 @@ def load_models():
         print(f"[Startup Error] Failed to load models: {e}")
         raise e
 
-def analyze_image_quality(image_bytes: bytes) -> dict:
+def calculate_quality_metrics(img: np.ndarray) -> dict:
     """
-    Computes image quality metrics (resolution, brightness, blur score) using OpenCV.
+    Computes image quality metrics and assigns a rating: Excellent, Good, Fair, Poor, or Rejected.
     """
-    nparr = np.frombuffer(image_bytes, np.uint8)
-    img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-    
-    if img is None:
-        return {
-            "resolution": "Unknown",
-            "brightness": 0.0,
-            "blur_score": 0.0,
-            "suitability": "Rejected",
-            "reason": "Corrupt or unreadable image format."
-        }
-        
     h, w, _ = img.shape
-    resolution = f"{w} x {h} px"
+    resolution_str = f"{w} x {h} px"
     
-    # Grayscale conversion for brightness/blur
-    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    # Grayscale conversion for metrics
+    gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
     brightness = float(np.mean(gray))
     
-    # Laplacian variance for blur estimation
+    # Laplacian variance for blur score
     blur_score = float(cv2.Laplacian(gray, cv2.CV_64F).var())
     
-    # Validation constraints
+    # Suitability Logic - Only reject genuinely unusable images
     reasons = []
     suitability = "Suitable"
+    rating = "Good"
     
-    if w < 224 or h < 224:
+    # Genuinely unusable constraints (micro-images, complete black/white, or extreme blur)
+    if w < 64 or h < 64:
         suitability = "Rejected"
-        reasons.append(f"Resolution too low ({w}x{h}). Minimum required: 224x224 px")
-        
-    if brightness < 20:
+        reasons.append("Image is extremely small (Under 64x64 pixels).")
+    elif brightness < 5:
         suitability = "Rejected"
-        reasons.append(f"Image too dark (Brightness: {brightness:.1f}). Minimum required: 20")
-    elif brightness > 250:
+        reasons.append("Image is pitch black (Under 5 brightness units).")
+    elif brightness > 253:
         suitability = "Rejected"
-        reasons.append(f"Image overexposed (Brightness: {brightness:.1f}). Maximum allowed: 250")
-        
-    if blur_score < 15:
+        reasons.append("Image is completely white/overexposed (Over 253 brightness units).")
+    elif blur_score < 2.0:
         suitability = "Rejected"
-        reasons.append(f"Image too blurry (Focus score: {blur_score:.1f}). Minimum required: 15")
-        
+        reasons.append("Image is completely unreadable or blank.")
+
+    if suitability == "Rejected":
+        rating = "Poor"
+    else:
+        # Determine rating: Excellent, Good, Fair, Poor
+        if w >= 800 and h >= 600 and 80 <= brightness <= 180 and blur_score >= 80:
+            rating = "Excellent"
+        elif w >= 480 and h >= 480 and 60 <= brightness <= 220 and blur_score >= 40:
+            rating = "Good"
+        elif w >= 224 and h >= 224 and 40 <= brightness <= 240 and blur_score >= 20:
+            rating = "Fair"
+        else:
+            rating = "Poor"
+            
+        if rating in ["Fair", "Poor"]:
+            if w < 224 or h < 224:
+                reasons.append("Low resolution (Under 224x224 px). Enhancement applied.")
+            if brightness < 40 or brightness > 240:
+                reasons.append("Non-optimal lighting conditions detected.")
+            if blur_score < 20:
+                reasons.append("Low contrast / camera motion blur detected.")
+
     reason_str = "; ".join(reasons) if reasons else "Image meets quality standards."
     
     return {
-        "resolution": resolution,
+        "resolution": resolution_str,
         "brightness": round(brightness, 2),
         "blur_score": round(blur_score, 2),
+        "rating": rating,
         "suitability": suitability,
         "reason": reason_str
     }
+
+def enhance_image(img_cv: np.ndarray) -> np.ndarray:
+    """
+    Applies automatic image enhancement operations: CLAHE, brightness/contrast normalization,
+    light denoising, and mild sharpening.
+    """
+    # 1. Apply CLAHE on LAB Color Space (Low contrast enhancement)
+    lab = cv2.cvtColor(img_cv, cv2.COLOR_RGB2LAB)
+    l_channel, a_channel, b_channel = cv2.split(lab)
+    
+    # Only apply CLAHE if standard deviation (contrast) is low
+    if np.std(l_channel) < 42:
+        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+        l_channel = clahe.apply(l_channel)
+        
+    # 2. Normalize Brightness & Contrast
+    mean_l = np.mean(l_channel)
+    if mean_l < 95:
+        # Amplify low light
+        l_channel = cv2.convertScaleAbs(l_channel, alpha=1.2, beta=15)
+    elif mean_l > 185:
+        # Tone down overexposure
+        l_channel = cv2.convertScaleAbs(l_channel, alpha=0.9, beta=-10)
+        
+    enhanced = cv2.merge((l_channel, a_channel, b_channel))
+    enhanced = cv2.cvtColor(enhanced, cv2.COLOR_LAB2RGB)
+    
+    # 3. Light Denoising (Bilateral filtering preserves sharp edges)
+    enhanced = cv2.bilateralFilter(enhanced, d=5, sigmaColor=35, sigmaSpace=35)
+    
+    # 4. Mild Sharpening
+    sharpen_kernel = np.array([
+        [0, -0.15, 0],
+        [-0.15, 1.6, -0.15],
+        [0, -0.15, 0]
+    ])
+    enhanced = cv2.filter2D(enhanced, -1, sharpen_kernel)
+    
+    return enhanced
+
+def generate_simulated_heatmap(img_rgb: np.ndarray, res=(224, 224)) -> np.ndarray:
+    """
+    Focal simulated heatmap focusing on high-contrast edge boundaries (scratches/dents).
+    """
+    img_uint8 = np.clip(img_rgb, 0, 255).astype(np.uint8)
+    gray = cv2.cvtColor(img_uint8, cv2.COLOR_RGB2GRAY)
+    
+    # Compute Sobel edge vectors
+    sobelx = cv2.Sobel(gray, cv2.CV_64F, 1, 0, ksize=3)
+    sobely = cv2.Sobel(gray, cv2.CV_64F, 0, 1, ksize=3)
+    magnitude = np.sqrt(sobelx**2 + sobely**2)
+    
+    # Apply Gaussian blur to create smooth glow fields
+    heatmap = cv2.GaussianBlur(magnitude, (21, 21), 0)
+    
+    # Normalize map [0.0, 1.0]
+    max_val = np.max(heatmap)
+    if max_val > 0:
+        heatmap = heatmap / max_val
+    else:
+        # Center-weighted fallback map if completely flat
+        h, w = res
+        y, x = np.ogrid[:h, :w]
+        cy, cx = h // 2, w // 2
+        heatmap = np.exp(-((x - cx)**2 + (y - cy)**2) / (2 * (50**2)))
+        
+    return cv2.resize(heatmap, res)
+
+def compute_gradcam(model, img_array, target_res=(224, 224)) -> np.ndarray:
+    """
+    Dynamically traces model layers to compute Grad-CAM colormaps.
+    Falls back to edge-intensity simulated heatmaps if TF/Keras tracing fails.
+    """
+    try:
+        # Find nested base model or functional layers
+        nested_model = None
+        for layer in model.layers:
+            if isinstance(layer, tf.keras.Model) or 'mobilenet' in layer.name.lower():
+                nested_model = layer
+                break
+                
+        if nested_model is not None:
+            last_conv_layer = None
+            for layer in reversed(nested_model.layers):
+                if len(layer.output_shape) == 4 and ('conv' in layer.name.lower() or 'relu' in layer.name.lower()):
+                    last_conv_layer = layer
+                    break
+                    
+            if last_conv_layer is not None:
+                sub_model = tf.keras.Model(
+                    inputs=nested_model.inputs,
+                    outputs=[last_conv_layer.output, nested_model.output]
+                )
+                
+                with tf.GradientTape() as tape:
+                    # Pass inputs through preceding top-level layers
+                    x = img_array
+                    for layer in model.layers:
+                        if layer == nested_model:
+                            break
+                        x = layer(x)
+                        
+                    conv_outputs, model_outputs = sub_model(x)
+                    
+                    # Pass model_outputs through top-level head layers
+                    y = model_outputs
+                    reached_nested = False
+                    for layer in model.layers:
+                        if reached_nested:
+                            y = layer(y)
+                        if layer == nested_model:
+                            reached_nested = True
+                            
+                    class_idx = np.argmax(y[0])
+                    loss = y[:, class_idx]
+                    
+                grads = tape.gradient(loss, conv_outputs)
+                pooled_grads = tf.reduce_mean(grads, axis=(0, 1, 2))
+                conv_outputs = conv_outputs[0]
+                heatmap = conv_outputs @ pooled_grads[..., tf.newaxis]
+                heatmap = tf.squeeze(heatmap)
+                heatmap = tf.maximum(heatmap, 0) / tf.math.reduce_max(heatmap)
+                return cv2.resize(heatmap.numpy(), target_res)
+                
+        # If not nested
+        last_conv_layer = None
+        for layer in reversed(model.layers):
+            if len(layer.output_shape) == 4 and ('conv' in layer.name.lower() or 'relu' in layer.name.lower()):
+                last_conv_layer = layer
+                break
+                
+        if last_conv_layer is not None:
+            grad_model = tf.keras.Model(
+                inputs=model.inputs,
+                outputs=[last_conv_layer.output, model.output]
+            )
+            with tf.GradientTape() as tape:
+                conv_outputs, predictions = grad_model(img_array)
+                class_idx = np.argmax(predictions[0])
+                loss = predictions[:, class_idx]
+                
+            grads = tape.gradient(loss, conv_outputs)
+            pooled_grads = tf.reduce_mean(grads, axis=(0, 1, 2))
+            conv_outputs = conv_outputs[0]
+            heatmap = conv_outputs @ pooled_grads[..., tf.newaxis]
+            heatmap = tf.squeeze(heatmap)
+            heatmap = tf.maximum(heatmap, 0) / tf.math.reduce_max(heatmap)
+            return cv2.resize(heatmap.numpy(), target_res)
+            
+        raise ValueError("No convolutional layers located.")
+    except Exception as e:
+        print(f"[Grad-CAM Warning] Standard trace failed ({e}). Falling back to simulated heatmap.")
+        # Pass first image in batch [0]
+        return generate_simulated_heatmap(img_array[0], target_res)
+
+def apply_heatmap_overlay(img_rgb: np.ndarray, heatmap: np.ndarray, alpha=0.45) -> np.ndarray:
+    """
+    Overlays colormap attention map on top of RGB image.
+    """
+    heatmap_uint8 = np.uint8(255 * heatmap)
+    heatmap_color = cv2.applyColorMap(heatmap_uint8, cv2.COLORMAP_JET)
+    heatmap_color_rgb = cv2.cvtColor(heatmap_color, cv2.COLOR_BGR2RGB)
+    
+    # Overlay overlay = img * (1-alpha) + heatmap_color_rgb * alpha
+    overlay = cv2.addWeighted(img_rgb.astype(np.uint8), 1 - alpha, heatmap_color_rgb, alpha, 0)
+    return overlay
+
+def to_base64_url(img_rgb: np.ndarray) -> str:
+    """
+    Converts RGB image to Base64 data URL string.
+    """
+    img_bgr = cv2.cvtColor(img_rgb, cv2.COLOR_RGB2BGR)
+    _, buffer = cv2.imencode('.jpg', img_bgr, [int(cv2.IMWRITE_JPEG_QUALITY), 80])
+    b64_str = base64.b64encode(buffer).decode('utf-8')
+    return f"data:image/jpeg;base64,{b64_str}"
 
 def get_damage_explanation(category: str, severity: str) -> str:
     """
@@ -259,7 +445,6 @@ async def analyze_vehicle(
     if binary_model is None:
         raise HTTPException(status_code=503, detail="Primary AI models are not loaded.")
 
-    # Validate image format
     if not file.content_type.startswith("image/"):
         raise HTTPException(status_code=400, detail="File provided is not a valid image format.")
 
@@ -267,8 +452,19 @@ async def analyze_vehicle(
         # Read file bytes
         image_bytes = await file.read()
         
-        # 1. Stage 3: Image Quality Validation using OpenCV
-        quality = analyze_image_quality(image_bytes)
+        # Load raw image using PIL
+        pil_img_raw = Image.open(BytesIO(image_bytes)).convert('RGB')
+        
+        # Correct EXIF Orientation (rotate to normal upright state)
+        pil_img = ImageOps.exif_transpose(pil_img_raw)
+        
+        # Convert PIL to OpenCV RGB numpy array for quality assessment and enhancements
+        img_np = np.array(pil_img)
+        
+        # 1. Image Quality Assessment (OpenCV)
+        quality = calculate_quality_metrics(img_np)
+        
+        # Reject genuinely unusable images
         if quality["suitability"] == "Rejected":
             return {
                 "quality": quality,
@@ -277,25 +473,30 @@ async def analyze_vehicle(
                 "report": None
             }
 
-        # Load image for neural classification
-        img = Image.open(BytesIO(image_bytes)).convert('RGB')
-        img_resized = img.resize((224, 224))
+        # Preserve the original image base64 before resizing/filtering
+        original_base64 = to_base64_url(img_np)
+
+        # 2. Automatic Image Enhancement (CLAHE + Contrast normalizing + denoising + sharpening)
+        enhanced_np = enhance_image(img_np)
+        enhanced_base64 = to_base64_url(enhanced_np)
+
+        # 3. Resize enhanced image to model input size (224x224)
+        img_resized = cv2.resize(enhanced_np, (224, 224))
         img_arr = np.array(img_resized, dtype=np.float32)
         batch_input = np.expand_dims(img_arr, axis=0)
 
-        # 2. Stage 4: Binary Damage Detection (existing model)
+        # 4. Stage 4: Binary Damage Detection (existing model)
         start_time = time.time()
         binary_preds = binary_model(batch_input, training=False).numpy()[0]
         inference_time_1 = time.time() - start_time
         
-        # Binary prediction (Index 0 matches 00-damage, Index 1 matches 01-whole)
         primary_class_idx = int(np.argmax(binary_preds))
         primary_conf = float(binary_preds[primary_class_idx])
         
         is_damaged = (primary_class_idx == 0)
         primary_label = "Damage" if is_damaged else "No Damage"
 
-        # 3. Stage 5: Secondary Damage Type Classification
+        # 5. Stage 5: Secondary Damage Type Classification
         secondary_label = "none"
         secondary_conf = 0.0
         inference_time_2 = 0.0
@@ -311,11 +512,19 @@ async def analyze_vehicle(
                 secondary_classes = ["bumper", "dent", "glass", "scratch"]
                 secondary_label = secondary_classes[sec_class_idx]
             else:
-                # Emulator fallback logic if secondary model was missing
+                # Emulator fallback
                 secondary_label = "scratch"
                 secondary_conf = 0.95
         
-        # 4. Severity Estimation (Explainable logic)
+        # 6. Grad-CAM Overlay Generation (Explainable AI)
+        active_model = secondary_model if (is_damaged and secondary_model is not None) else binary_model
+        heatmap_grid = compute_gradcam(active_model, batch_input, target_res=(224, 224))
+        
+        # Overlay heatmap on resized enhanced image
+        heatmap_overlay_rgb = apply_heatmap_overlay(img_resized, heatmap_grid)
+        heatmap_base64 = to_base64_url(heatmap_overlay_rgb)
+
+        # 7. Severity Estimation (Explainable logic)
         severity = "None"
         if is_damaged:
             if secondary_label in ["glass", "bumper"] and secondary_conf > 0.85:
@@ -325,23 +534,20 @@ async def analyze_vehicle(
             else:
                 severity = "Moderate"
 
-        # 5. Deterministic Health Score Calculation
+        # 8. Deterministic Health Score Calculation
         health_score = 100
         health_explanation = "Vehicle panel integrity is normal. No structural anomalies detected."
         
         if is_damaged:
-            # Penalties base: scratch = 10, dent = 15, bumper = 20, glass = 25
             base_penalties = {"scratch": 10, "dent": 15, "bumper": 20, "glass": 25, "none": 0}
             base_penalty = base_penalties.get(secondary_label, 15)
             
-            # Severity multiplier: Minor = 0.5, Moderate = 1.0, Severe = 2.0
             sev_multipliers = {"Minor": 0.5, "Moderate": 1.0, "Severe": 2.0}
             multiplier = sev_multipliers.get(severity, 1.0)
             
-            # Confidence penalty (adds up to 10 points for high prediction variance)
             conf_penalty = (1.0 - secondary_conf) * 10
             
-            total_penalty = (base_penalty * multiplier) + conf_penalty + 5 # +5 for affected component
+            total_penalty = (base_penalty * multiplier) + conf_penalty + 5
             health_score = max(0, int(100 - total_penalty))
             
             health_explanation = (
@@ -349,13 +555,10 @@ async def analyze_vehicle(
                 f"exhibiting a base penalty of {base_penalty * multiplier:.1f} and confidence variance penalty of {conf_penalty:.1f}."
             )
 
-        # 6. Repair Cost Engine (Configurable Database + Severity Multipliers)
+        # 9. Repair Cost Engine
         cost_breakdown = {"parts": 0, "labour": 0, "paint": 0, "gst": 0, "total": 0}
-        
         if is_damaged:
             cat_rates = REPAIR_DATABASE.get(secondary_label, REPAIR_DATABASE["damage"])
-            
-            # Severity multiplier on costs: Minor = 0.5, Moderate = 1.0, Severe = 2.0
             cost_multiplier = 0.5 if severity == "Minor" else (1.0 if severity == "Moderate" else 2.0)
             
             parts_cost = int(cat_rates["parts"] * cost_multiplier)
@@ -374,7 +577,7 @@ async def analyze_vehicle(
                 "total": total_cost
             }
 
-        # 7. Repair Time Engine
+        # 10. Repair Time Engine
         working_hours = 0
         repair_days = 0
         expected_completion = "N/A"
@@ -393,7 +596,7 @@ async def analyze_vehicle(
             completion_date = datetime.date.today() + datetime.timedelta(days=repair_days)
             expected_completion = completion_date.strftime("%Y-%m-%d")
 
-        # 8. Insurance Engine
+        # 11. Insurance Engine
         recommendation = "Self Repair Recommended"
         ins_reason = "No claims necessary. Panels are clean."
         req_docs = []
@@ -423,7 +626,7 @@ async def analyze_vehicle(
                 )
                 req_docs.append("First Information Report (FIR) copy - mandatory for major crash events")
 
-        # 9. Driving Safety Logic
+        # 12. Driving Safety Logic
         roadworthy = "Yes"
         night_safe = "Yes"
         highway_safe = "Yes"
@@ -449,10 +652,10 @@ async def analyze_vehicle(
                     f"Moderate {secondary_label} deformation. Panel could detach under highway drag. "
                     "Windshield/headlight refraction pattern might degrade night visibility."
                 )
-            else: # Minor cosmetic scratch/dent
+            else: # Minor cosmetic
                 safety_reason = "Cosmetic damage only. Headlights, bumpers, and structural frame elements remain fully functional."
 
-        # 10. Maintenance Roadmap
+        # 13. Maintenance Roadmap
         maintenance_roadmap = [
             "Keep records of this digital inspection log for claims and future resale documentation."
         ]
@@ -467,6 +670,11 @@ async def analyze_vehicle(
         # Combined JSON Output
         return {
             "quality": quality,
+            "images": {
+                "original": original_base64,
+                "enhanced": enhanced_base64,
+                "heatmap": heatmap_base64
+            },
             "primary_detection": {
                 "label": primary_label,
                 "confidence": round(primary_conf, 4)
