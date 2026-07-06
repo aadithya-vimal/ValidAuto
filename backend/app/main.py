@@ -9,6 +9,7 @@ from io import BytesIO
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 import tensorflow as tf
+from app.ocr import perform_ocr
 
 app = FastAPI(
     title="ValidAuto Inspection API",
@@ -327,29 +328,30 @@ def to_base64_url(img_rgb: np.ndarray) -> str:
     b64_str = base64.b64encode(buffer).decode('utf-8')
     return f"data:image/jpeg;base64,{b64_str}"
 
-def compute_damage_localization(img_rgb: np.ndarray, heatmap: np.ndarray) -> dict:
+def compute_damage_localization(img_rgb: np.ndarray, heatmap: np.ndarray, category: str = "none", confidence: float = 0.0) -> dict:
     # Threshold heatmap to get a binary mask (activations above 0.35)
     _, thresh = cv2.threshold(np.uint8(255 * heatmap), 90, 255, cv2.THRESH_BINARY)
     
     # Find contours
     contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     
-    # Create overlay copy
-    overlay = img_rgb.copy()
-    
     h, w, _ = img_rgb.shape
     total_area = h * w
     mask_area = 0
     num_regions = 0
     largest_region = 0.0
-    bounding_boxes = []
+    
+    # Create translucent red mask overlay
+    mask_overlay = np.zeros_like(img_rgb)
     
     # Grid segmentation for Affected Vehicle Area
     affected_areas = []
     
+    overlay = img_rgb.copy()
+    
     for c in contours:
         area = cv2.contourArea(c)
-        if area < 40:  # Noise threshold
+        if area < 40:  # Noise filter
             continue
             
         num_regions += 1
@@ -357,43 +359,72 @@ def compute_damage_localization(img_rgb: np.ndarray, heatmap: np.ndarray) -> dic
         if area > largest_region:
             largest_region = area
             
+        # Draw translucent red mask on the overlay
+        cv2.drawContours(mask_overlay, [c], -1, (255, 0, 0), -1)  # Fill mask in Red (represented as Blue in BGR, but we are in RGB!)
+        # Draw green contour borders
+        cv2.drawContours(overlay, [c], -1, (16, 185, 129), 1)
+        
         # Get bounding box
         x, y, box_w, box_h = cv2.boundingRect(c)
-        bounding_boxes.append([x, y, box_w, box_h])
         
-        # Draw bounding box in bright green/red on the overlay
-        cv2.rectangle(overlay, (x, y), (x + box_w, y + box_h), (5, 235, 115), 2)
-        cv2.putText(overlay, f"Region {num_regions}", (x, max(y - 5, 10)),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.4, (5, 235, 115), 1)
-        
-        # Classify affected vehicle area based on box location (Deterministic coordinate mapping)
-        cx = x + box_w // 2
-        cy = y + box_h // 2
-        
-        # Grid layout:
-        # y: top 35% = Windshield / Hood, mid 35% = Door / Fender, bottom 30% = Bumpers
-        if cy < h * 0.35:
-            area_str = "Windshield / Hood"
-        elif cy > h * 0.70:
-            if cx < w * 0.35:
-                area_str = "Front Bumper (Left Corner)"
-            elif cx > w * 0.65:
-                area_str = "Front Bumper (Right Corner)"
-            else:
-                area_str = "Front/Rear Bumper"
+        # Calculate centroid using moments
+        M = cv2.moments(c)
+        if M["m00"] != 0:
+            cx = int(M["m10"] / M["m00"])
+            cy = int(M["m01"] / M["m00"])
         else:
-            if cx < w * 0.35:
-                area_str = "Left Door / Fender"
-            elif cx > w * 0.65:
-                area_str = "Right Door / Fender"
-            else:
-                area_str = "Grille / Core Panel"
-                
+            cx = x + box_w // 2
+            cy = y + box_h // 2
+            
+        # Draw bounding box in bright green on the overlay
+        cv2.rectangle(overlay, (x, y), (x + box_w, y + box_h), (5, 235, 115), 2)
+        
+        # Draw centroid target icon (Yellow circle with crosshair)
+        cv2.circle(overlay, (cx, cy), 4, (245, 158, 11), -1)
+        cv2.line(overlay, (cx - 7, cy), (cx + 7, cy), (245, 158, 11), 1)
+        cv2.line(overlay, (cx, cy - 7), (cx, cy + 7), (245, 158, 11), 1)
+        
+        # Label regions
+        cv2.putText(overlay, f"Loc {num_regions}", (x, max(y - 5, 10)),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.4, (245, 158, 11), 1)
+        
+        # Compute grid coordinate region
+        vert = "Middle"
+        if cy < h * 0.35:
+            vert = "Upper"
+        elif cy > h * 0.65:
+            vert = "Lower"
+            
+        horiz = "Center"
+        if cx < w * 0.35:
+            horiz = "Left"
+        elif cx > w * 0.65:
+            horiz = "Right"
+            
+        area_str = f"Estimated Damage Region: {vert} {horiz}"
+        
+        # High confidence panel naming
+        if confidence >= 0.85:
+            if category.lower() == "glass":
+                area_str += " (Windshield / Optical Glass)"
+            elif category.lower() == "bumper":
+                area_str += " (Bumper Fascia Panel)"
+            elif category.lower() == "dent" or category.lower() == "scratch":
+                if vert == "Lower" and horiz == "Center":
+                    area_str += " (Underbody Panel / Bumper)"
+                else:
+                    area_str += " (Exterior Door / Fender Panel)"
+                    
         if area_str not in affected_areas:
             affected_areas.append(area_str)
             
+    # Apply alpha blending for translucent mask
+    # BGR/RGB: Mask overlay has Red channel filled.
+    # We blend mask_overlay (which is red) with overlay
+    cv2.addWeighted(mask_overlay, 0.3, overlay, 0.7, 0, overlay)
+            
     coverage_pct = (mask_area / total_area) * 100
-    affected_area_result = ", ".join(affected_areas) if affected_areas else "Estimated damaged region"
+    affected_area_result = ", ".join(affected_areas) if affected_areas else "Estimated Damage Region: Unspecified"
     
     return {
         "overlay_img": overlay,
@@ -537,6 +568,9 @@ async def analyze_vehicle(
         # Convert PIL to OpenCV RGB numpy array for quality assessment and enhancements
         img_np = np.array(pil_img)
         
+        # Run OCR extraction
+        ocr_res = perform_ocr(img_np)
+        
         # 1. Image Quality Assessment (OpenCV)
         quality = calculate_quality_metrics(img_np)
         
@@ -601,7 +635,7 @@ async def analyze_vehicle(
         heatmap_base64 = to_base64_url(heatmap_overlay_rgb)
 
         # Compute Localization metrics & Overlay
-        loc_res = compute_damage_localization(img_resized, heatmap_grid)
+        loc_res = compute_damage_localization(img_resized, heatmap_grid, category=secondary_label, confidence=secondary_conf)
         localized_overlay_rgb = loc_res["overlay_img"]
         localized_base64 = to_base64_url(localized_overlay_rgb)
         
@@ -767,6 +801,7 @@ async def analyze_vehicle(
         # Combined JSON Output
         return {
             "quality": quality,
+            "ocr": ocr_res,
             "images": {
                 "original": original_base64,
                 "enhanced": enhanced_base64,
