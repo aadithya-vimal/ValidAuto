@@ -60,7 +60,7 @@ def get_possible_cause(damage_type: str, severity: str) -> str:
         "scratch": {
             "Low": "Typically caused by brushing against light vegetation, abrasive washing brushes, key rings, or flying road grit.",
             "Moderate": "Often results from low-speed contact with shopping carts, bicycle handlebars, or side-scraping parking garage guard rails.",
-            "High": "Usually caused by deliberate keying vandalism, heavy side-swipe incidents, or dragging against brick/concrete pillars."
+            "High": "Usually caused by deliberate keying vandalism, heavy side swipe incidents, or dragging against brick/concrete pillars."
         },
         "dent": {
             "Low": "Usually caused by small hail stones, door dings from adjacent cars in parking lots, or small kick-up road stones.",
@@ -162,10 +162,10 @@ def get_insurance_summary(damage_type: str, severity: str) -> str:
         return "Not applicable. No insurance claims are necessary."
         
     if severity == "Low":
-        return "The repair cost is highly likely to be below standard insurance deductibles ($500 - $1,000). Paying out-of-pocket is advised to avoid claims record marks and potential premium raises."
+        return "The repair cost is highly likely to be below standard comprehensive insurance deductibles (typically ₹2,000 - ₹5,000 in India). Paying out-of-pocket is advised to avoid claims record marks and keep your No Claim Bonus (NCB) discount."
         
     if severity == "Moderate":
-        return "Repair costs will closely approximate typical comprehensive deductibles. We recommend obtaining a written estimate from a shop first to determine if filing a claim is financially logical."
+        return "Repair costs will closely approximate typical comprehensive policy deductibles. We recommend obtaining a written estimate from an authorized garage first to determine if filing a claim is financially logical."
         
     return "Significant repair costs anticipated. It is recommended to contact your insurance representative to submit a comprehensive or collision claim. Attach this automated inspection report and original damage photos as evidence."
 
@@ -175,7 +175,89 @@ def generate_report_dict(damage_type: str, severity: str, confidence: float) -> 
     """
     damage_type = damage_type.lower()
     severity = severity.capitalize() if severity.lower() != "none" else "None"
+    resolved = resolve_type(damage_type)
     
+    # Calculate Health Score (0-100)
+    if resolved == "none" or severity == "None":
+        health_score = int(95 + confidence * 5)
+        health_score = min(100, max(95, health_score))
+    else:
+        if severity == "Low":
+            health_score = int(85 + (1.0 - confidence) * 10)
+        elif severity == "Moderate":
+            health_score = int(65 + (1.0 - confidence) * 15)
+        else:
+            health_score = int(35 + (1.0 - confidence) * 20)
+            
+    # Calculate Repair Costs in Indian Rupees (₹)
+    if resolved == "none" or severity == "None":
+        min_cost = 0
+        max_cost = 0
+    elif resolved == "scratch":
+        min_cost = 8000 if severity == "High" else (3000 if severity == "Moderate" else 1200)
+        max_cost = 15000 if severity == "High" else (8000 if severity == "Moderate" else 3000)
+    elif resolved == "dent":
+        min_cost = 12000 if severity == "High" else (5000 if severity == "Moderate" else 2000)
+        max_cost = 35000 if severity == "High" else (12000 if severity == "Moderate" else 5000)
+    else: # general damage
+        min_cost = 20000 if severity == "High" else (8000 if severity == "Moderate" else 3500)
+        max_cost = 75000 if severity == "High" else (20000 if severity == "Moderate" else 8000)
+
+    # Priority
+    priority = "Low" if severity == "Low" else ("Medium" if severity == "Moderate" else ("High" if severity == "High" else "Low"))
+    if resolved == "none":
+        priority = "None"
+        
+    # Driving Risk
+    if resolved == "none" or severity == "None":
+        driving_risk = "Safe (Fully Roadworthy)"
+    elif severity == "Low":
+        driving_risk = "Safe (Cosmetic Defect Only)"
+    elif severity == "Moderate":
+        driving_risk = "Caution (Minor Panel Deflection)"
+    else:
+        driving_risk = "Hazardous (Inspection Required - Structurally Compromised)"
+        
+    # Insurance Claim Eligibility
+    if resolved == "none" or severity == "None":
+        insurance_eligibility = "Not Applicable"
+    elif severity == "Low":
+        insurance_eligibility = "Low Viability (Costs typically below standard deductibles)"
+    elif severity == "Moderate":
+        insurance_eligibility = "Eligible (Filing claim recommended if deductible is low)"
+    else:
+        insurance_eligibility = "Highly Eligible (Major repair expenses anticipated)"
+        
+    # Required Insurance Documents
+    if resolved == "none" or severity == "None":
+        required_docs = []
+    else:
+        required_docs = [
+            "Active Car Insurance Policy Document Copy",
+            "Valid Driving License (DL) of the driver",
+            "Vehicle Registration Certificate (RC) book/card",
+            "Signed Claim Intimation Form",
+            "Pre-repair Estimate Invoice from authorized garage"
+        ]
+        if severity == "High":
+            required_docs.append("First Information Report (FIR) - mandatory for major third-party accidents")
+
+    # Maintenance Recommendations
+    if resolved == "none" or severity == "None":
+        recommendations = [
+            "Schedule standard vehicle washing and wax detailing to maintain clear-coat shine.",
+            "Apply paint sealant coat to guard against UV degradation.",
+            "Keep records of regular detailing inspection routines."
+        ]
+    else:
+        recommendations = [
+            "Attend to the damage area quickly to avoid humidity oxidation and rust on metal panel sheets.",
+            "Verify all ADAS cameras and backup ultrasonic distance sensors near the affected area are clear of mud and paint debris."
+        ]
+        if severity == "High" or severity == "Moderate":
+            recommendations.append("Obtain alignment and structural integrity check for the bumper reinforcement bar.")
+            recommendations.append("Apply anti-corrosion primer coating before any repainting procedures.")
+
     return {
         "damage_type": damage_type,
         "severity": severity,
@@ -185,5 +267,13 @@ def generate_report_dict(damage_type: str, severity: str, confidence: float) -> 
         "repair_recommendation": get_repair_recommendation(damage_type, severity),
         "estimated_repair_time": get_repair_time(damage_type, severity),
         "safety_advice": get_safety_advice(damage_type, severity),
-        "insurance_summary": get_insurance_summary(damage_type, severity)
+        "insurance_summary": get_insurance_summary(damage_type, severity),
+        "health_score": health_score,
+        "min_cost": min_cost,
+        "max_cost": max_cost,
+        "priority": priority,
+        "driving_risk": driving_risk,
+        "insurance_eligibility": insurance_eligibility,
+        "required_docs": required_docs,
+        "maintenance_recommendations": recommendations
     }
