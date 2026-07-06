@@ -6,15 +6,7 @@ from io import BytesIO
 from pydantic import BaseModel
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-
-# Try importing standard tensorflow, fallback to local raw numpy emulator if not available (e.g. Python 3.14)
-try:
-    import tensorflow as tf
-except ImportError:
-    try:
-        import tf_mock as tf
-    except ImportError:
-        from app import tf_mock as tf
+import tensorflow as tf
 
 app = FastAPI(
     title="Vehicle Damage Assessment API",
@@ -44,40 +36,28 @@ class ReportRequest(BaseModel):
 @app.on_event("startup")
 def load_trained_classifier():
     """
-    Startup event hook to pre-load model weights into memory.
+    Startup event hook to pre-load the real Keras/TensorFlow model weights into memory.
+    No tf_mock or fallback emulators are allowed.
     """
     global model
     try:
         if os.path.exists(MODEL_PATH):
-            model = tf.load_model(MODEL_PATH)
-        else:
-            print(f"[Warning] Model file not found at '{MODEL_PATH}'. Initializing a fallback default model.")
-            # Initialize fallback model
-            model = tf.Sequential()
+            print(f"Loading real Keras/TensorFlow model from {MODEL_PATH}...")
+            model = tf.keras.models.load_model(MODEL_PATH)
+            
+            # Discover classes dynamically from dataset folder
             dataset_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', 'data1a'))
             train_dir = os.path.join(dataset_dir, 'training')
             if os.path.exists(train_dir):
-                discovered_classes = sorted([d for d in os.listdir(train_dir) if os.path.isdir(os.path.join(train_dir, d))])
+                model.classes = sorted([d for d in os.listdir(train_dir) if os.path.isdir(os.path.join(train_dir, d))])
             else:
-                discovered_classes = []
-            model.classes = discovered_classes
-            num_classes = len(discovered_classes) if len(discovered_classes) > 0 else 2
-            # Default mock random weights for 3072 features to classes
-            model.weights = np.random.randn(3072, num_classes) * 0.001
-            model.bias = np.zeros(num_classes)
-    except Exception as e:
-        print(f"[Error] Failed loading model: {e}. Starting with raw fallback.")
-        model = tf.Sequential()
-        dataset_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', 'data1a'))
-        train_dir = os.path.join(dataset_dir, 'training')
-        if os.path.exists(train_dir):
-            discovered_classes = sorted([d for d in os.listdir(train_dir) if os.path.isdir(os.path.join(train_dir, d))])
+                model.classes = ["00-damage", "01-whole"]
+            print(f"Model successfully loaded. Classes: {model.classes}")
         else:
-            discovered_classes = []
-        model.classes = discovered_classes
-        num_classes = len(discovered_classes) if len(discovered_classes) > 0 else 2
-        model.weights = np.random.randn(3072, num_classes) * 0.001
-        model.bias = np.zeros(num_classes)
+            raise FileNotFoundError(f"Model file not found at '{MODEL_PATH}'. Production requires a real trained model.")
+    except Exception as e:
+        print(f"[Critical Error] Failed to load model: {e}")
+        raise e
 
 @app.get("/health")
 def health_check():
@@ -116,15 +96,15 @@ async def analyze_image(file: UploadFile = File(...)):
         img = Image.open(BytesIO(contents)).convert('RGB')
         img_resized = img.resize((224, 224))
         
-        # Convert to numpy array and normalize inputs to [0.0, 1.0]
-        img_arr = np.array(img_resized, dtype=np.float32) / 255.0
+        # Convert to numpy array in [0.0, 255.0] range (Rescaling layer in Keras model handles normalization to [-1, 1])
+        img_arr = np.array(img_resized, dtype=np.float32)
         
         # Expand dims to represent batch input (1, 224, 224, 3)
         batch_input = np.expand_dims(img_arr, axis=0)
 
         # Model Inference: Run forward prediction pass
         start_time = time.time()
-        predictions = model.predict(batch_input)  # Output array of size (1, 3)
+        predictions = model(batch_input, training=False).numpy()  # Fast TF direct call
         inference_time = time.time() - start_time
 
         # Extract predictions for batch item 0
