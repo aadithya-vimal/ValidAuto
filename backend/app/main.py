@@ -3,6 +3,7 @@ import time
 import numpy as np
 from PIL import Image
 from io import BytesIO
+from pydantic import BaseModel
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -14,8 +15,8 @@ except ImportError:
 
 app = FastAPI(
     title="Vehicle Damage Assessment API",
-    description="Backend service for classifying vehicle damage from images (Phase 2 Live)",
-    version="2.0.0"
+    description="Backend service for classifying vehicle damage from images and generating reports (Phase 3)",
+    version="3.0.0"
 )
 
 # CORS configurations for communication with the frontend
@@ -30,6 +31,12 @@ app.add_middleware(
 # Global Model Variable
 model = None
 MODEL_PATH = os.path.join(os.path.dirname(__file__), 'vehicle_damage_model.h5')
+
+# Pydantic schemas for Report Generation
+class ReportRequest(BaseModel):
+    damage: str
+    severity: str
+    confidence: float
 
 @app.on_event("startup")
 def load_trained_classifier():
@@ -63,7 +70,7 @@ def health_check():
     return {
         "status": "healthy",
         "timestamp": time.time(),
-        "version": "2.0.0",
+        "version": "3.0.0",
         "model_loaded": model is not None
     }
 
@@ -77,7 +84,7 @@ async def analyze_image(file: UploadFile = File(...)):
     if model is None:
         raise HTTPException(status_code=503, detail="Model is not loaded on server.")
 
-    # 1. Simple validation on file type
+    # Simple validation on file type
     if not file.content_type.startswith("image/"):
         raise HTTPException(
             status_code=400, 
@@ -88,7 +95,7 @@ async def analyze_image(file: UploadFile = File(...)):
         # Read file bytes
         contents = await file.read()
         
-        # 2. Image Preprocessing: Load and Resize using PIL
+        # Image Preprocessing: Load and Resize using PIL
         img = Image.open(BytesIO(contents)).convert('RGB')
         img_resized = img.resize((224, 224))
         
@@ -98,7 +105,7 @@ async def analyze_image(file: UploadFile = File(...)):
         # Expand dims to represent batch input (1, 224, 224, 3)
         batch_input = np.expand_dims(img_arr, axis=0)
 
-        # 3. Model Inference: Run forward prediction pass
+        # Model Inference: Run forward prediction pass
         start_time = time.time()
         predictions = model.predict(batch_input)  # Output array of size (1, 3)
         inference_time = time.time() - start_time
@@ -109,12 +116,10 @@ async def analyze_image(file: UploadFile = File(...)):
         confidence = float(probs[pred_class_idx])
         damage_class = model.classes[pred_class_idx]
 
-        # 4. Map Confidence & Damage type to Severity thresholds
-        # If no damage is detected, severity is None
+        # Map Confidence & Damage type to Severity thresholds
         if damage_class == 'none':
             severity = "None"
         else:
-            # Map severity threshold based on prediction confidence
             if confidence >= 0.80:
                 severity = "High"
             elif confidence >= 0.50:
@@ -135,4 +140,23 @@ async def analyze_image(file: UploadFile = File(...)):
         raise HTTPException(
             status_code=500,
             detail=f"Error executing image analysis model: {str(e)}"
+        )
+
+@app.post("/report")
+def generate_report(request: ReportRequest):
+    """
+    Local report generation endpoint mapping classifier parameters into natural-reading paragraphs.
+    """
+    from app.report import generate_report_dict
+    try:
+        report_data = generate_report_dict(
+            damage_type=request.damage,
+            severity=request.severity,
+            confidence=request.confidence
+        )
+        return {"report": report_data}
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error generating diagnostic report: {str(e)}"
         )
