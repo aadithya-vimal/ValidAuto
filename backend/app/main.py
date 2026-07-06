@@ -11,7 +11,10 @@ from fastapi.middleware.cors import CORSMiddleware
 try:
     import tensorflow as tf
 except ImportError:
-    import tf_mock as tf
+    try:
+        import tf_mock as tf
+    except ImportError:
+        from app import tf_mock as tf
 
 app = FastAPI(
     title="Vehicle Damage Assessment API",
@@ -51,16 +54,16 @@ def load_trained_classifier():
             print(f"[Warning] Model file not found at '{MODEL_PATH}'. Initializing a fallback default model.")
             # Initialize fallback model
             model = tf.Sequential()
-            model.classes = ['scratch', 'dent', 'none']
-            # Default mock random weights for 3072 features to 3 classes
-            model.weights = np.random.randn(3072, 3) * 0.001
-            model.bias = np.zeros(3)
+            model.classes = ['00-damage', '01-whole']
+            # Default mock random weights for 3072 features to 2 classes
+            model.weights = np.random.randn(3072, 2) * 0.001
+            model.bias = np.zeros(2)
     except Exception as e:
         print(f"[Error] Failed loading model: {e}. Starting with raw fallback.")
         model = tf.Sequential()
-        model.classes = ['scratch', 'dent', 'none']
-        model.weights = np.random.randn(3072, 3) * 0.001
-        model.bias = np.zeros(3)
+        model.classes = ['00-damage', '01-whole']
+        model.weights = np.random.randn(3072, 2) * 0.001
+        model.bias = np.zeros(2)
 
 @app.get("/health")
 def health_check():
@@ -117,7 +120,7 @@ async def analyze_image(file: UploadFile = File(...)):
         damage_class = model.classes[pred_class_idx]
 
         # Map Confidence & Damage type to Severity thresholds
-        if damage_class == 'none':
+        if damage_class in ['01-whole', 'none']:
             severity = "None"
         else:
             if confidence >= 0.80:
