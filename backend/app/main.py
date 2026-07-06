@@ -54,16 +54,30 @@ def load_trained_classifier():
             print(f"[Warning] Model file not found at '{MODEL_PATH}'. Initializing a fallback default model.")
             # Initialize fallback model
             model = tf.Sequential()
-            model.classes = ['00-damage', '01-whole']
-            # Default mock random weights for 3072 features to 2 classes
-            model.weights = np.random.randn(3072, 2) * 0.001
-            model.bias = np.zeros(2)
+            dataset_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', 'data1a'))
+            train_dir = os.path.join(dataset_dir, 'training')
+            if os.path.exists(train_dir):
+                discovered_classes = sorted([d for d in os.listdir(train_dir) if os.path.isdir(os.path.join(train_dir, d))])
+            else:
+                discovered_classes = []
+            model.classes = discovered_classes
+            num_classes = len(discovered_classes) if len(discovered_classes) > 0 else 2
+            # Default mock random weights for 3072 features to classes
+            model.weights = np.random.randn(3072, num_classes) * 0.001
+            model.bias = np.zeros(num_classes)
     except Exception as e:
         print(f"[Error] Failed loading model: {e}. Starting with raw fallback.")
         model = tf.Sequential()
-        model.classes = ['00-damage', '01-whole']
-        model.weights = np.random.randn(3072, 2) * 0.001
-        model.bias = np.zeros(2)
+        dataset_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', 'data1a'))
+        train_dir = os.path.join(dataset_dir, 'training')
+        if os.path.exists(train_dir):
+            discovered_classes = sorted([d for d in os.listdir(train_dir) if os.path.isdir(os.path.join(train_dir, d))])
+        else:
+            discovered_classes = []
+        model.classes = discovered_classes
+        num_classes = len(discovered_classes) if len(discovered_classes) > 0 else 2
+        model.weights = np.random.randn(3072, num_classes) * 0.001
+        model.bias = np.zeros(num_classes)
 
 @app.get("/health")
 def health_check():
@@ -120,7 +134,8 @@ async def analyze_image(file: UploadFile = File(...)):
         damage_class = model.classes[pred_class_idx]
 
         # Map Confidence & Damage type to Severity thresholds
-        if damage_class in ['01-whole', 'none']:
+        is_whole = any(w in damage_class.lower() for w in ['whole', 'clean', 'none'])
+        if is_whole:
             severity = "None"
         else:
             if confidence >= 0.80:
