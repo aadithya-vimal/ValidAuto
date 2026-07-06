@@ -94,24 +94,27 @@ export default function AnalysisPage() {
 
   // Maps live classifier outputs to the dashboard visuals
   const mapAPIResponseToAssessment = (data: LiveAPIResponse): AssessmentDetails => {
-    const isDamage = data.damage !== "none" && data.damage !== "01-whole";
+    const dmg = data.damage.toLowerCase();
+    const isDamage = !dmg.includes("whole") && !dmg.includes("clean") && !dmg.includes("none");
     
     let minCost = 0;
     let maxCost = 0;
     let suggestedAction = "No repairs required. Exterior panels are in clean condition.";
 
-    if (data.damage === "00-damage" || data.damage === "damage") {
-      minCost = data.severity === "High" ? 850 : data.severity === "Moderate" ? 450 : 150;
-      maxCost = data.severity === "High" ? 1500 : data.severity === "Moderate" ? 750 : 300;
-      suggestedAction = "Vehicle exterior damage identified. Requires professional body shop alignment or panel repair.";
-    } else if (data.damage === "scratch") {
-      minCost = data.severity === "High" ? 450 : data.severity === "Moderate" ? 250 : 120;
-      maxCost = data.severity === "High" ? 700 : data.severity === "Moderate" ? 380 : 220;
-      suggestedAction = "Scratched panel identified. Requires surface detailing, paint touch-up, or clear coat blending.";
-    } else if (data.damage === "dent") {
-      minCost = data.severity === "High" ? 950 : data.severity === "Moderate" ? 600 : 350;
-      maxCost = data.severity === "High" ? 1800 : data.severity === "Moderate" ? 900 : 550;
-      suggestedAction = "Panel dent detected. Requires professional Paintless Dent Repair (PDR) or body shop alignment pulling.";
+    if (isDamage) {
+      if (dmg.includes("scratch")) {
+        minCost = data.severity === "High" ? 450 : data.severity === "Moderate" ? 250 : 120;
+        maxCost = data.severity === "High" ? 700 : data.severity === "Moderate" ? 380 : 220;
+        suggestedAction = "Scratched panel identified. Requires surface detailing, paint touch-up, or clear coat blending.";
+      } else if (dmg.includes("dent")) {
+        minCost = data.severity === "High" ? 950 : data.severity === "Moderate" ? 600 : 350;
+        maxCost = data.severity === "High" ? 1800 : data.severity === "Moderate" ? 900 : 550;
+        suggestedAction = "Panel dent detected. Requires professional Paintless Dent Repair (PDR) or body shop alignment pulling.";
+      } else {
+        minCost = data.severity === "High" ? 850 : data.severity === "Moderate" ? 450 : 150;
+        maxCost = data.severity === "High" ? 1500 : data.severity === "Moderate" ? 750 : 300;
+        suggestedAction = "Vehicle exterior damage identified. Requires professional body shop alignment or panel repair.";
+      }
     }
 
     const partsDamaged: PartDamage[] = isDamage ? [
@@ -142,6 +145,7 @@ export default function AnalysisPage() {
   const generateLocalReport = (damage: string, severity: string, confidence: number): ReportData => {
     const capSeverity = severity.charAt(0).toUpperCase() + severity.slice(1).toLowerCase();
     const dmg = damage.toLowerCase();
+    const isWhole = dmg.includes("whole") || dmg.includes("clean") || dmg.includes("none");
     
     let description = "";
     let cause = "";
@@ -150,35 +154,14 @@ export default function AnalysisPage() {
     let safety = "";
     let insurance = "";
 
-    if (dmg === "none" || dmg === "01-whole") {
+    if (isWhole) {
       description = "No anomalies or body panel defects were detected by the computer vision scan.";
       cause = "No causes to report. Panel integrity is normal.";
       recommendation = "No repairs necessary. Maintain standard vehicle detailing schedules.";
       repairTime = "0 Hours";
       safety = "No safety flags raised. The panel alignment is healthy and the vehicle remains fully roadworthy.";
       insurance = "Not applicable. No insurance claims are necessary.";
-    } else if (dmg === "00-damage" || dmg === "damage") {
-      description = `The scanning engine identified vehicle body panel damage with ${(confidence * 100).toFixed(1)}% confidence (Estimated Severity: ${capSeverity}).`;
-      if (capSeverity === "High") {
-        cause = "Typically indicates moderate-to-high speed collision impact, striking structural barriers, or panel crash occurrences.";
-        recommendation = "Requires panel replacement or major alignment correction, body filler smoothing, priming, and full color-matched respray.";
-        repairTime = "2 - 4 Days";
-        safety = "Caution: High-severity panel deformation may compromise safety structures or hide internal crash-bar degradation. Check ADAS sensors.";
-        insurance = "Significant repair costs anticipated. It is recommended to contact your insurance representative to submit a claim.";
-      } else if (capSeverity === "Moderate") {
-        cause = "Commonly caused by shopping cart impact, low-speed parking bumps, or side-scraping guard rails.";
-        recommendation = "Requires localized panel repair, metal massaging or pulling, followed by sanding and paint refinishing.";
-        repairTime = "4 - 8 Hours";
-        safety = "The identified damage is cosmetic in nature. Standard vehicle operations and structural safety remain unaffected.";
-        insurance = "Repair costs will closely approximate deductibles. Obtain a shop estimate first to evaluate claim viability.";
-      } else {
-        cause = "Typically caused by minor road debris, low-impact bumps, or parking scratches.";
-        recommendation = "Apply clear coat rubbing compounds, minor body pulling, and localized paint touch-ups.";
-        repairTime = "1 - 3 Hours";
-        safety = "The identified damage is cosmetic in nature. Standard vehicle operations and structural safety remain unaffected.";
-        insurance = "Repair cost falls below standard deductibles. Out-of-pocket payment is recommended to protect insurance rates.";
-      }
-    } else if (dmg === "scratch") {
+    } else if (dmg.includes("scratch")) {
       description = `The scanning engine identified a ${capSeverity.toLowerCase()}-severity paint scratch on the vehicle skin with ${(confidence * 100).toFixed(1)}% confidence.`;
       if (capSeverity === "High") {
         cause = "Usually caused by deliberate keying vandalism, heavy side-swipe incidents, or dragging against brick/concrete pillars.";
@@ -199,7 +182,7 @@ export default function AnalysisPage() {
         safety = "The identified damage is cosmetic in nature. Standard vehicle operations and structural safety remain unaffected.";
         insurance = "Repair cost falls below standard deductibles. Out-of-pocket payment is recommended to protect insurance rates.";
       }
-    } else if (dmg === "dent") {
+    } else if (dmg.includes("dent")) {
       description = `Computer vision diagnostics indicate a physical panel dent on the casing (Classified with ${(confidence * 100).toFixed(1)}% confidence).`;
       if (capSeverity === "High") {
         cause = "Typically indicates moderate-to-high speed collision impact, striking structural bollards, or utility post collisions.";
@@ -218,6 +201,27 @@ export default function AnalysisPage() {
         recommendation = "Can be resolved quickly using Paintless Dent Repair (PDR) pulling tabs or specialized suction tools.";
         repairTime = "1 - 3 Hours";
         safety = "The identified damage is cosmetic. Vehicle operations and safety remain unaffected.";
+        insurance = "Repair cost falls below standard deductibles. Out-of-pocket payment is recommended to protect insurance rates.";
+      }
+    } else {
+      description = `The scanning engine identified vehicle body panel damage with ${(confidence * 100).toFixed(1)}% confidence (Estimated Severity: ${capSeverity}).`;
+      if (capSeverity === "High") {
+        cause = "Typically indicates moderate-to-high speed collision impact, striking structural barriers, or panel crash occurrences.";
+        recommendation = "Requires panel replacement or major alignment correction, body filler smoothing, priming, and full color-matched respray.";
+        repairTime = "2 - 4 Days";
+        safety = "Caution: High-severity panel deformation may compromise safety structures or hide internal crash-bar degradation. Check ADAS sensors.";
+        insurance = "Significant repair costs anticipated. It is recommended to contact your insurance representative to submit a claim.";
+      } else if (capSeverity === "Moderate") {
+        cause = "Commonly caused by shopping cart impact, low-speed parking bumps, or side-scraping guard rails.";
+        recommendation = "Requires localized panel repair, metal massaging or pulling, followed by sanding and paint refinishing.";
+        repairTime = "4 - 8 Hours";
+        safety = "The identified damage is cosmetic in nature. Standard vehicle operations and structural safety remain unaffected.";
+        insurance = "Repair costs will closely approximate deductibles. Obtain a shop estimate first to evaluate claim viability.";
+      } else {
+        cause = "Typically caused by minor road debris, low-impact bumps, or parking scratches.";
+        recommendation = "Apply clear coat rubbing compounds, minor body pulling, and localized paint touch-ups.";
+        repairTime = "1 - 3 Hours";
+        safety = "The identified damage is cosmetic in nature. Standard vehicle operations and structural safety remain unaffected.";
         insurance = "Repair cost falls below standard deductibles. Out-of-pocket payment is recommended to protect insurance rates.";
       }
     }
@@ -268,7 +272,7 @@ export default function AnalysisPage() {
       await new Promise((resolve) => setTimeout(resolve, 1600));
 
       const mockData: LiveAPIResponse = {
-        damage: "00-damage",
+        damage: "damage",
         confidence: 0.9324,
         severity: "High",
         filename: image.name,
