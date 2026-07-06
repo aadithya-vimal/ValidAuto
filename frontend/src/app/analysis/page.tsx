@@ -1,11 +1,11 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import UploadCard from "@/components/UploadCard";
 import ImagePreview from "@/components/ImagePreview";
 import ResultCards, { PartDamage } from "@/components/ResultCards";
 import ReportCard from "@/components/ReportCard";
-import { AlertCircle, ServerCrash, RefreshCw, Sparkles, CheckCircle2, Cpu, FileText, Printer, ShieldAlert } from "lucide-react";
+import { AlertCircle, ServerCrash, RefreshCw, Sparkles, CheckCircle2, Cpu, FileText, Printer, ShieldAlert, Check } from "lucide-react";
 
 // Live API response structure from FastAPI /analyze (Phase 2)
 interface LiveAPIResponse {
@@ -54,10 +54,25 @@ export default function AnalysisPage() {
   const [report, setReport] = useState<ReportData | null>(null);
   const [isGeneratingReport, setIsGeneratingReport] = useState(false);
   
+  // UX Loading Step State (Phase 4)
+  const [loadingStep, setLoadingStep] = useState(0);
+
   const [error, setError] = useState<string | null>(null);
   const [fallbackMode, setFallbackMode] = useState(false);
 
   const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
+
+  // Cycle through loading steps during analysis (Phase 4)
+  useEffect(() => {
+    let interval: NodeJS.Timeout;
+    if (isAnalyzing) {
+      setLoadingStep(0);
+      interval = setInterval(() => {
+        setLoadingStep((prev) => (prev < 3 ? prev + 1 : prev));
+      }, 400);
+    }
+    return () => clearInterval(interval);
+  }, [isAnalyzing]);
 
   const handleImageSelect = (file: File) => {
     setImage(file);
@@ -119,7 +134,7 @@ export default function AnalysisPage() {
     };
   };
 
-  // Pre-loaded offline report generator mirroring backend/app/report.py logic
+  // Pre-loaded report generator mirroring backend report.py
   const generateLocalReport = (damage: string, severity: string, confidence: number): ReportData => {
     const capSeverity = severity.charAt(0).toUpperCase() + severity.slice(1).toLowerCase();
     const dmg = damage.toLowerCase();
@@ -225,7 +240,7 @@ export default function AnalysisPage() {
       console.warn("FastAPI backend unavailable, switching to local emulated model prediction simulation.", err);
       setFallbackMode(true);
       
-      await new Promise((resolve) => setTimeout(resolve, 1500));
+      await new Promise((resolve) => setTimeout(resolve, 1600));
 
       const mockData: LiveAPIResponse = {
         damage: "scratch",
@@ -269,7 +284,6 @@ export default function AnalysisPage() {
       setReport(data.report);
     } catch (err) {
       console.warn("FastAPI report server offline, invoking local client-side report generator.", err);
-      // Run local generator fallback
       const localReport = generateLocalReport(
         liveResponse.damage,
         liveResponse.severity,
@@ -289,7 +303,7 @@ export default function AnalysisPage() {
     <div className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8 space-y-8 flex-1 print:p-0">
       {/* Page Header (Hidden when printing) */}
       <div className="border-b border-white/5 pb-6 print:hidden">
-        <h1 className="text-3xl font-extrabold tracking-tight text-white sm:text-4xl">
+        <h1 className="text-3xl font-extrabold tracking-tight text-white sm:text-4xl bg-gradient-to-r from-white to-slate-400 bg-clip-text text-transparent">
           Vehicle Scanner
         </h1>
         <p className="mt-2 text-sm text-slate-400">
@@ -311,13 +325,22 @@ export default function AnalysisPage() {
         </div>
       )}
 
+      {/* Dismissible Error alert card (Phase 4) */}
       {error && (
-        <div className="flex items-start gap-3 rounded-2xl bg-brand-rose/10 border border-brand-rose/20 p-4 print:hidden">
-          <AlertCircle className="h-5 w-5 text-brand-rose shrink-0 mt-0.5" />
-          <div className="text-sm">
-            <p className="font-semibold text-brand-rose">Analysis Failed</p>
-            <p className="text-slate-300 mt-1">{error}</p>
+        <div className="flex items-start justify-between gap-3 rounded-2xl bg-brand-rose/10 border border-brand-rose/20 p-4 print:hidden animate-fade-in">
+          <div className="flex gap-3">
+            <AlertCircle className="h-5 w-5 text-brand-rose shrink-0 mt-0.5" />
+            <div className="text-sm">
+              <p className="font-semibold text-brand-rose">Analysis Failed</p>
+              <p className="text-slate-300 mt-1">{error}</p>
+            </div>
           </div>
+          <button 
+            onClick={() => setError(null)} 
+            className="text-xs text-slate-400 hover:text-white transition-colors font-bold uppercase cursor-pointer"
+          >
+            Dismiss
+          </button>
         </div>
       )}
 
@@ -342,18 +365,47 @@ export default function AnalysisPage() {
 
         {/* Right Column: AI Scan Output */}
         <div className="lg:col-span-7 space-y-8 print:col-span-12 print:w-full">
-          {/* Section header hidden when printing */}
           <h2 className="text-sm font-bold text-slate-400 tracking-wider uppercase print:hidden">
             AI Scan Results
           </h2>
 
+          {/* High-Tech Preprocessing Checklist Loading HUD (Phase 4) */}
           {isAnalyzing && (
-            <div className="glass-panel flex flex-col items-center justify-center rounded-2xl p-12 text-center text-slate-400 min-h-[300px] print:hidden">
-              <RefreshCw className="h-10 w-10 text-brand-cyan animate-spin mb-4" />
-              <h3 className="text-lg font-bold text-white mb-2">Running Classifier Model...</h3>
-              <p className="text-sm text-slate-400 max-w-sm">
-                Running image preprocessing vectors. Extracting MobileNetV2 bottleneck features and computing classification matrices.
-              </p>
+            <div className="glass-panel rounded-2xl p-8 min-h-[300px] flex flex-col justify-center print:hidden">
+              <div className="flex items-center gap-3 mb-6">
+                <RefreshCw className="h-6 w-6 text-brand-cyan animate-spin" />
+                <h3 className="text-lg font-bold text-white">Running Classifier Model...</h3>
+              </div>
+              
+              <div className="space-y-4">
+                <div className="flex items-center gap-3 text-sm transition-all duration-300">
+                  <div className={`flex h-5 w-5 items-center justify-center rounded-full text-xs ${loadingStep >= 1 ? "bg-brand-emerald/20 text-brand-emerald" : "bg-white/5 text-slate-500"}`}>
+                    {loadingStep >= 1 ? <Check className="h-3 w-3" /> : "1"}
+                  </div>
+                  <span className={loadingStep >= 1 ? "text-slate-200" : "text-slate-500"}>Preprocessing and resizing input image</span>
+                </div>
+
+                <div className="flex items-center gap-3 text-sm transition-all duration-300">
+                  <div className={`flex h-5 w-5 items-center justify-center rounded-full text-xs ${loadingStep >= 2 ? "bg-brand-emerald/20 text-brand-emerald" : "bg-white/5 text-slate-500"}`}>
+                    {loadingStep >= 2 ? <Check className="h-3 w-3" /> : "2"}
+                  </div>
+                  <span className={loadingStep >= 2 ? "text-slate-200" : "text-slate-500"}>Normalizing color channel vectors</span>
+                </div>
+
+                <div className="flex items-center gap-3 text-sm transition-all duration-300">
+                  <div className={`flex h-5 w-5 items-center justify-center rounded-full text-xs ${loadingStep >= 3 ? "bg-brand-emerald/20 text-brand-emerald" : "bg-white/5 text-slate-500"}`}>
+                    {loadingStep >= 3 ? <Check className="h-3 w-3" /> : "3"}
+                  </div>
+                  <span className={loadingStep >= 3 ? "text-slate-200" : "text-slate-500"}>Extracting MobileNetV2 bottleneck features</span>
+                </div>
+
+                <div className="flex items-center gap-3 text-sm transition-all duration-300">
+                  <div className={`flex h-5 w-5 items-center justify-center rounded-full text-xs ${loadingStep >= 3 ? "bg-brand-cyan/20 text-brand-cyan animate-pulse" : "bg-white/5 text-slate-500"}`}>
+                    {loadingStep >= 3 ? <RefreshCw className="h-3 w-3 animate-spin" /> : "4"}
+                  </div>
+                  <span className={loadingStep >= 3 ? "text-brand-cyan animate-pulse" : "text-slate-500"}>Running fully connected Dense prediction layers</span>
+                </div>
+              </div>
             </div>
           )}
 
@@ -369,15 +421,15 @@ export default function AnalysisPage() {
 
           {!isAnalyzing && liveResponse && assessment && (
             <div className="space-y-8 animate-fade-in print:space-y-6">
-              {/* Success Notification badge (Hidden when printing) */}
+              {/* Success Notification badge */}
               <div className="flex items-center gap-2 text-xs text-brand-emerald bg-brand-emerald/10 border border-brand-emerald/20 px-3 py-1.5 rounded-full w-max print:hidden">
                 <CheckCircle2 className="h-3.5 w-3.5" />
                 Scan Completed (Inference Time: {liveResponse.inference_time_seconds ? `${liveResponse.inference_time_seconds}s` : "0.05s"})
               </div>
 
-              {/* Model Classification HUD Card (Hidden when printing) */}
+              {/* Model Classification HUD Card (Phase 4 improved) */}
               <div className="glass-panel rounded-2xl p-6 border-brand-indigo/30 bg-gradient-to-br from-brand-indigo/10 to-brand-cyan/5 shadow-lg shadow-slate-950/20 print:hidden">
-                <div className="flex items-center justify-between mb-4">
+                <div className="flex items-center justify-between mb-5">
                   <div className="flex items-center gap-2 text-slate-400 text-xs font-bold uppercase tracking-wider">
                     <Cpu className="h-4 w-4 text-brand-cyan" />
                     <span>Model Prediction Output (Phase 2)</span>
@@ -388,16 +440,16 @@ export default function AnalysisPage() {
                     <button
                       onClick={handleGenerateReport}
                       disabled={isGeneratingReport}
-                      className="inline-flex items-center gap-1.5 rounded-lg bg-brand-indigo px-3 py-1.5 text-xs font-bold text-white hover:bg-brand-indigo/90 shadow transition-all cursor-pointer disabled:opacity-50"
+                      className="inline-flex items-center gap-1.5 rounded-xl bg-gradient-to-r from-brand-indigo to-brand-cyan px-4 py-2 text-xs font-bold text-white hover:opacity-95 shadow transition-all cursor-pointer disabled:opacity-50 hover:scale-[1.01]"
                     >
                       {isGeneratingReport ? (
                         <>
-                          <RefreshCw className="h-3 w-3 animate-spin" />
+                          <RefreshCw className="h-3.5 w-3.5 animate-spin" />
                           Generating...
                         </>
                       ) : (
                         <>
-                          <FileText className="h-3 w-3" />
+                          <FileText className="h-3.5 w-3.5" />
                           Generate Report
                         </>
                       )}
@@ -405,21 +457,35 @@ export default function AnalysisPage() {
                   )}
                 </div>
                 <div className="grid grid-cols-3 gap-4 text-center divide-x divide-white/10">
+                  {/* Damage Type */}
                   <div>
-                    <span className="block text-[10px] text-slate-400 uppercase font-medium mb-1">Damage Type</span>
+                    <span className="block text-[10px] text-slate-400 uppercase font-medium mb-1.5">Damage Type</span>
                     <span className="text-xl font-extrabold text-white capitalize">{liveResponse.damage}</span>
                   </div>
-                  <div>
-                    <span className="block text-[10px] text-slate-400 uppercase font-medium mb-1">AI Confidence</span>
+
+                  {/* Confidence Progress Bar (Phase 4) */}
+                  <div className="px-3">
+                    <span className="block text-[10px] text-slate-400 uppercase font-medium mb-1.5">AI Confidence</span>
                     <span className="text-xl font-extrabold text-brand-cyan">{(liveResponse.confidence * 100).toFixed(1)}%</span>
+                    <div className="h-1.5 w-full rounded-full bg-white/10 mt-2 overflow-hidden max-w-[120px] mx-auto">
+                      <div 
+                        className="h-full rounded-full bg-gradient-to-r from-brand-indigo to-brand-cyan transition-all duration-700 ease-out"
+                        style={{ width: `${liveResponse.confidence * 100}%` }}
+                      />
+                    </div>
                   </div>
+
+                  {/* Severity Badge with neon shadow glows (Phase 4) */}
                   <div>
-                    <span className="block text-[10px] text-slate-400 uppercase font-medium mb-1">Severity Tier</span>
-                    <span className={`text-xl font-extrabold capitalize ${
-                      liveResponse.severity === "High" ? "text-brand-rose" :
-                      liveResponse.severity === "Moderate" ? "text-brand-amber" :
-                      liveResponse.severity === "Low" ? "text-brand-emerald" : "text-slate-400"
-                    }`}>{liveResponse.severity}</span>
+                    <span className="block text-[10px] text-slate-400 uppercase font-medium mb-2.5">Severity Tier</span>
+                    <span className={`inline-flex items-center gap-1 px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider ${
+                      liveResponse.severity === "High" ? "bg-brand-rose/10 text-brand-rose border border-brand-rose/30 shadow-[0_0_12px_rgba(244,63,94,0.15)] animate-pulse" :
+                      liveResponse.severity === "Moderate" ? "bg-brand-amber/10 text-brand-amber border border-brand-amber/30 shadow-[0_0_12px_rgba(245,158,11,0.15)]" :
+                      liveResponse.severity === "Low" ? "bg-brand-emerald/10 text-brand-emerald border border-brand-emerald/30 shadow-[0_0_12px_rgba(16,185,129,0.15)]" :
+                      "bg-white/5 text-slate-400 border border-white/10"
+                    }`}>
+                      {liveResponse.severity}
+                    </span>
                   </div>
                 </div>
               </div>
@@ -440,7 +506,7 @@ export default function AnalysisPage() {
               {/* Phase 3: Formatted Assessment Report Sheet (Full-screen when printing) */}
               {report && (
                 <div className="glass-panel overflow-hidden rounded-2xl border-brand-cyan/20 shadow-xl bg-gradient-to-b from-slate-900/50 to-slate-950/80 print:bg-white print:text-black print:border-none print:shadow-none print:p-0 print:static print:w-full print:block print:text-sm">
-                  {/* Top Color Accent (Hidden when printing) */}
+                  {/* Top Color Accent */}
                   <div className="h-2 w-full bg-gradient-to-r from-brand-cyan to-brand-indigo print:hidden" />
                   
                   <div className="p-6 md:p-8 space-y-6 print:p-0">
@@ -455,10 +521,10 @@ export default function AnalysisPage() {
                         </p>
                       </div>
                       
-                      {/* Action buttons (Hidden when printing) */}
+                      {/* Action buttons */}
                       <button
                         onClick={handlePrintPDF}
-                        className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-brand-indigo to-brand-cyan px-4 py-2 text-xs font-bold text-white shadow-md hover:scale-[1.01] transition-all cursor-pointer print:hidden"
+                        className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-brand-indigo to-brand-cyan px-4 py-2 text-xs font-bold text-white shadow-md hover:opacity-95 hover:scale-[1.01] transition-all cursor-pointer print:hidden"
                       >
                         <Printer className="h-3.5 w-3.5" />
                         Download PDF
