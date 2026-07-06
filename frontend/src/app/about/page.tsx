@@ -1,6 +1,6 @@
 "use client";
 
-import { Cpu, ShieldCheck, Heart, Sparkles, BookOpen, Layers } from "lucide-react";
+import { Cpu, ShieldCheck, Heart, Sparkles, BookOpen, Layers, LineChart } from "lucide-react";
 
 export default function AboutPage() {
   const techStack = [
@@ -57,7 +57,7 @@ export default function AboutPage() {
           About AutoShield AI
         </h1>
         <p className="mt-2 text-sm text-slate-400">
-          Learn about our mission, technological blueprints, and conceptual workflows.
+          Learn about our mission, technological blueprints, and model performance metrics.
         </p>
       </div>
 
@@ -74,9 +74,46 @@ export default function AboutPage() {
           <p className="text-slate-300 leading-relaxed">
             AutoShield AI was founded as a conceptual exploration into automating vehicle damage inspections. 
             By merging high-performance API structures with real-time browser visualizers, we aim to minimize 
-            the friction between fender benders and insurance checks. In Phase 1, we establish our UI framework 
-            and dummy API endpoints to secure robust validation testing.
+            the friction between fender benders and insurance checks. In Phase 2 and 3, we successfully trained 
+            a transfer-learning model on MobileNetV2 features and built a structured local report generator.
           </p>
+        </div>
+      </div>
+
+      {/* Model Performance Graphics Section (Phase 4) */}
+      <div className="space-y-6">
+        <h3 className="text-xl font-bold text-white flex items-center gap-2">
+          <LineChart className="h-5 w-5 text-brand-cyan" />
+          Model Evaluation Metrics & Training Curves
+        </h3>
+        <p className="text-sm text-slate-400 leading-normal">
+          The following graphs are generated directly in the backend after data preprocessing, augmentation, 
+          and training. They show how validation accuracy progresses and map the classification confusion matrix.
+        </p>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <div className="glass-panel rounded-2xl p-6 flex flex-col items-center">
+            <h4 className="text-sm font-semibold text-slate-300 mb-4">Training & Validation Accuracy Graph</h4>
+            <div className="relative aspect-video w-full overflow-hidden rounded-xl bg-slate-950/50 border border-white/5">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src="/accuracy_graph.png"
+                alt="Model Accuracy curves over epochs"
+                className="h-full w-full object-contain"
+              />
+            </div>
+          </div>
+          
+          <div className="glass-panel rounded-2xl p-6 flex flex-col items-center">
+            <h4 className="text-sm font-semibold text-slate-300 mb-4">Confusion Matrix Grid</h4>
+            <div className="relative aspect-video w-full overflow-hidden rounded-xl bg-slate-950/50 border border-white/5">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src="/confusion_matrix.png"
+                alt="Confusion Matrix classified cells"
+                className="h-full w-full object-contain"
+              />
+            </div>
+          </div>
         </div>
       </div>
 
