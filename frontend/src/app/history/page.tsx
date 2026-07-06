@@ -2,10 +2,11 @@
 
 import { useState, useEffect } from "react";
 import Link from "next/link";
+import InspectionComparer from "@/components/InspectionComparer";
 import { 
   History as HistoryIcon, Calendar, Trash2, ArrowLeft, Cpu, Activity, 
   ShieldAlert, IndianRupee, Sparkles, Search, SlidersHorizontal, ArrowUpDown,
-  Download, Eye, X, FileText
+  Download, Eye, X, FileText, ArrowLeftRight, Check, RefreshCw
 } from "lucide-react";
 
 interface HistoryItem {
@@ -34,6 +35,14 @@ export default function HistoryPage() {
   // Modal viewer state
   const [activeItem, setActiveItem] = useState<HistoryItem | null>(null);
 
+  // Comparison selections
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [showComparerModal, setShowComparerModal] = useState(false);
+
+  // Undo Delete state
+  const [deletedItem, setDeletedItem] = useState<HistoryItem | null>(null);
+  const [showUndoBanner, setShowUndoBanner] = useState(false);
+
   useEffect(() => {
     const stored = localStorage.getItem("validauto_history");
     if (stored) {
@@ -46,11 +55,34 @@ export default function HistoryPage() {
   }, []);
 
   const handleDelete = (id: string, e: React.MouseEvent) => {
-    e.stopPropagation(); // Avoid triggering card click
-    if (confirm("Are you sure you want to delete this inspection record?")) {
+    e.stopPropagation();
+    const itemToDelete = history.find(item => item.id === id);
+    if (itemToDelete) {
       const updated = history.filter(item => item.id !== id);
       setHistory(updated);
       localStorage.setItem("validauto_history", JSON.stringify(updated));
+      
+      // Save for Restore
+      setDeletedItem(itemToDelete);
+      setShowUndoBanner(true);
+      
+      // Remove from comparison selection
+      setSelectedIds((prev) => prev.filter((sId) => sId !== id));
+
+      // Hide banner after 6s
+      setTimeout(() => {
+        setShowUndoBanner(false);
+      }, 6000);
+    }
+  };
+
+  const handleRestore = () => {
+    if (deletedItem) {
+      const updated = [deletedItem, ...history];
+      setHistory(updated);
+      localStorage.setItem("validauto_history", JSON.stringify(updated));
+      setShowUndoBanner(false);
+      setDeletedItem(null);
     }
   };
 
@@ -58,10 +90,10 @@ export default function HistoryPage() {
     if (confirm("Are you sure you want to clear all history records?")) {
       localStorage.removeItem("validauto_history");
       setHistory([]);
+      setSelectedIds([]);
     }
   };
 
-  // Export Entire Logs to CSV
   const handleExportCSV = () => {
     const headers = ["ID", "Timestamp", "RegNumber", "Owner", "DamageType", "Severity", "HealthScore", "Cost"];
     const rows = history.map(i => [
@@ -93,7 +125,20 @@ export default function HistoryPage() {
     }).format(val);
   };
 
-  // Filter and Sort logs
+  const handleCheckboxChange = (id: string, e: React.MouseEvent) => {
+    e.stopPropagation(); // Stop card opening click
+    setSelectedIds((prev) => {
+      if (prev.includes(id)) {
+        return prev.filter((x) => x !== id);
+      }
+      if (prev.length >= 2) {
+        // limit to 2
+        return [prev[1], id];
+      }
+      return [...prev, id];
+    });
+  };
+
   const filteredItems = history
     .filter(item => {
       const matchSearch = 
@@ -113,6 +158,7 @@ export default function HistoryPage() {
 
   return (
     <div className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8 space-y-8 flex-1">
+      
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between border-b border-white/5 pb-6 gap-4">
         <div>
@@ -121,17 +167,27 @@ export default function HistoryPage() {
             Inspection Audit History
           </h1>
           <p className="mt-2 text-sm text-slate-400">
-            Access and manage past machine learning diagnostic reports generated locally in this browser.
+            Access, sort, and compare machine learning diagnostics generated locally in this browser.
           </p>
         </div>
 
         <div className="flex items-center gap-3">
+          {selectedIds.length === 2 && (
+            <button
+              onClick={() => setShowComparerModal(true)}
+              className="inline-flex items-center gap-2 rounded-xl bg-brand-cyan/20 border border-brand-cyan/40 px-4 py-2.5 text-xs font-bold text-brand-cyan shadow shadow-brand-cyan/10 hover:bg-brand-cyan/30 transition-all cursor-pointer animate-pulse"
+            >
+              <ArrowLeftRight className="h-4 w-4" />
+              Compare Selected ({selectedIds.length})
+            </button>
+          )}
+
           <Link
             href="/analysis"
             className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-brand-indigo to-brand-cyan px-4 py-2.5 text-xs font-bold text-white shadow shadow-brand-indigo/15 hover:opacity-95 transition-all"
           >
             <Cpu className="h-4 w-4" />
-            New Inspection
+            New Scan
           </Link>
           
           {history.length > 0 && (
@@ -154,6 +210,20 @@ export default function HistoryPage() {
           )}
         </div>
       </div>
+
+      {/* Undo Restore Toast Banner */}
+      {showUndoBanner && deletedItem && (
+        <div className="flex items-center justify-between p-4 bg-brand-emerald/10 border border-brand-emerald/20 text-brand-emerald text-xs font-bold rounded-xl animate-fade-in">
+          <span>Deleted inspection record for {deletedItem.filename}.</span>
+          <button 
+            onClick={handleRestore}
+            className="flex items-center gap-1 hover:underline cursor-pointer"
+          >
+            <RefreshCw className="h-3.5 w-3.5" />
+            Undo & Restore
+          </button>
+        </div>
+      )}
 
       {history.length === 0 ? (
         <div className="glass-panel flex flex-col items-center justify-center rounded-2xl p-16 text-center text-slate-400 min-h-[350px]">
@@ -233,16 +303,27 @@ export default function HistoryPage() {
             </div>
           </div>
 
+          {/* Comparative Instructions (If select 1) */}
+          {selectedIds.length === 1 && (
+            <div className="text-[10px] text-brand-cyan bg-brand-cyan/5 border border-brand-cyan/15 rounded-lg p-2.5 flex items-center gap-1.5 print:hidden">
+              <InfoIcon className="h-4 w-4 shrink-0" />
+              <span>Select one more audit record to launch comparative side-by-side analysis (Before vs After repair).</span>
+            </div>
+          )}
+
           {/* Records Grid */}
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
             {filteredItems.map((item) => {
               const isWhole = item.damage.toLowerCase() === "none";
+              const isChecked = selectedIds.includes(item.id);
               
               return (
                 <div 
                   key={item.id} 
                   onClick={() => setActiveItem(item)}
-                  className="glass-panel glass-panel-hover overflow-hidden rounded-2xl border-white/5 bg-slate-900/40 flex flex-col justify-between cursor-pointer"
+                  className={`glass-panel glass-panel-hover overflow-hidden rounded-2xl border bg-slate-900/40 flex flex-col justify-between cursor-pointer ${
+                    isChecked ? "border-brand-cyan/40" : "border-white/5"
+                  }`}
                 >
                   {/* Image & Date badge */}
                   <div className="relative aspect-video bg-slate-950/80 overflow-hidden border-b border-white/5">
@@ -252,10 +333,20 @@ export default function HistoryPage() {
                       alt={item.filename}
                       className="w-full h-full object-cover opacity-85"
                     />
-                    
-                    <div className="absolute top-3 left-3 inline-flex items-center gap-1 text-[9px] bg-slate-950/85 border border-white/10 px-2.5 py-1 rounded-md text-slate-300">
-                      <Calendar className="h-3.5 w-3.5 text-brand-cyan" />
-                      {new Date(item.timestamp).toLocaleDateString()}
+
+                    {/* Compare Selection Checkbox */}
+                    <div className="absolute top-3 left-3 flex items-center gap-1.5">
+                      <button
+                        onClick={(e) => handleCheckboxChange(item.id, e)}
+                        className={`h-5 w-5 rounded-md flex items-center justify-center border transition-all cursor-pointer ${
+                          isChecked ? "bg-brand-cyan border-brand-cyan text-slate-950" : "bg-slate-950/80 border-white/20 text-transparent"
+                        }`}
+                      >
+                        <Check className="h-3 w-3 stroke-[3]" />
+                      </button>
+                      <span className="text-[9px] bg-slate-950/85 border border-white/10 px-2 py-0.5 rounded text-slate-300 font-bold hidden sm:inline">
+                        Select to Compare
+                      </span>
                     </div>
 
                     <div className="absolute top-3 right-3 inline-flex items-center gap-1 text-[9px] bg-slate-950/85 border border-white/10 px-2.5 py-1 rounded-md text-white font-bold">
@@ -282,7 +373,10 @@ export default function HistoryPage() {
                       <h4 className="text-lg font-bold text-white capitalize">
                         {isWhole ? "No Damage Detected" : item.damage}
                       </h4>
-                      <p className="text-[10px] text-slate-400">Owner: {item.ownerName}</p>
+                      <div className="text-[10px] text-slate-400 space-y-0.5">
+                        <p>Owner: {item.ownerName}</p>
+                        <p>Scan: {new Date(item.timestamp).toLocaleDateString()}</p>
+                      </div>
                     </div>
 
                     {/* Stats */}
@@ -379,6 +473,61 @@ export default function HistoryPage() {
           </div>
         </div>
       )}
+
+      {/* Comparison Modal Viewer */}
+      {showComparerModal && selectedIds.length === 2 && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 backdrop-blur-sm p-4 animate-fade-in">
+          <div className="glass-panel w-full max-w-3xl max-h-[90vh] overflow-y-auto rounded-2xl border-white/10 bg-slate-900 shadow-2xl p-6 relative space-y-6">
+            <button 
+              onClick={() => setShowComparerModal(false)}
+              className="absolute right-4 top-4 text-slate-400 hover:text-white p-1"
+            >
+              <X className="h-5 w-5" />
+            </button>
+
+            <div className="border-b border-white/5 pb-4">
+              <h3 className="text-lg font-bold text-white uppercase flex items-center gap-2">
+                <ArrowLeftRight className="h-5.5 w-5.5 text-brand-cyan" />
+                Comparative Side-By-Side Evaluation
+              </h3>
+            </div>
+
+            <InspectionComparer 
+              records={history.filter(item => selectedIds.includes(item.id))} 
+            />
+
+            <div className="pt-4 border-t border-white/5 flex justify-end">
+              <button
+                onClick={() => setShowComparerModal(false)}
+                className="inline-flex items-center gap-1.5 rounded-xl bg-white/5 border border-white/10 px-4 py-2 text-xs font-bold text-white hover:bg-white/10 cursor-pointer"
+              >
+                Close Comparison
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
+  );
+}
+
+function InfoIcon(props: React.SVGProps<SVGSVGElement>) {
+  return (
+    <svg
+      {...props}
+      xmlns="http://www.w3.org/2000/svg"
+      width="24"
+      height="24"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <circle cx="12" cy="12" r="10" />
+      <line x1="12" y1="16" x2="12" y2="12" />
+      <line x1="12" y1="8" x2="12.01" y2="8" />
+    </svg>
   );
 }
