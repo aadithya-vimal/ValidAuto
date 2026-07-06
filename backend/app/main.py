@@ -327,6 +327,82 @@ def to_base64_url(img_rgb: np.ndarray) -> str:
     b64_str = base64.b64encode(buffer).decode('utf-8')
     return f"data:image/jpeg;base64,{b64_str}"
 
+def compute_damage_localization(img_rgb: np.ndarray, heatmap: np.ndarray) -> dict:
+    # Threshold heatmap to get a binary mask (activations above 0.35)
+    _, thresh = cv2.threshold(np.uint8(255 * heatmap), 90, 255, cv2.THRESH_BINARY)
+    
+    # Find contours
+    contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    
+    # Create overlay copy
+    overlay = img_rgb.copy()
+    
+    h, w, _ = img_rgb.shape
+    total_area = h * w
+    mask_area = 0
+    num_regions = 0
+    largest_region = 0.0
+    bounding_boxes = []
+    
+    # Grid segmentation for Affected Vehicle Area
+    affected_areas = []
+    
+    for c in contours:
+        area = cv2.contourArea(c)
+        if area < 40:  # Noise threshold
+            continue
+            
+        num_regions += 1
+        mask_area += area
+        if area > largest_region:
+            largest_region = area
+            
+        # Get bounding box
+        x, y, box_w, box_h = cv2.boundingRect(c)
+        bounding_boxes.append([x, y, box_w, box_h])
+        
+        # Draw bounding box in bright green/red on the overlay
+        cv2.rectangle(overlay, (x, y), (x + box_w, y + box_h), (5, 235, 115), 2)
+        cv2.putText(overlay, f"Region {num_regions}", (x, max(y - 5, 10)),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.4, (5, 235, 115), 1)
+        
+        # Classify affected vehicle area based on box location (Deterministic coordinate mapping)
+        cx = x + box_w // 2
+        cy = y + box_h // 2
+        
+        # Grid layout:
+        # y: top 35% = Windshield / Hood, mid 35% = Door / Fender, bottom 30% = Bumpers
+        if cy < h * 0.35:
+            area_str = "Windshield / Hood"
+        elif cy > h * 0.70:
+            if cx < w * 0.35:
+                area_str = "Front Bumper (Left Corner)"
+            elif cx > w * 0.65:
+                area_str = "Front Bumper (Right Corner)"
+            else:
+                area_str = "Front/Rear Bumper"
+        else:
+            if cx < w * 0.35:
+                area_str = "Left Door / Fender"
+            elif cx > w * 0.65:
+                area_str = "Right Door / Fender"
+            else:
+                area_str = "Grille / Core Panel"
+                
+        if area_str not in affected_areas:
+            affected_areas.append(area_str)
+            
+    coverage_pct = (mask_area / total_area) * 100
+    affected_area_result = ", ".join(affected_areas) if affected_areas else "Estimated damaged region"
+    
+    return {
+        "overlay_img": overlay,
+        "coverage_pct": round(coverage_pct, 2),
+        "num_regions": num_regions,
+        "largest_region_pct": round((largest_region / total_area) * 100, 2),
+        "affected_area": affected_area_result
+      }
+
 def get_damage_explanation(category: str, severity: str) -> str:
     """
     Returns explainable deterministic damage analysis narration.
@@ -516,13 +592,23 @@ async def analyze_vehicle(
                 secondary_label = "scratch"
                 secondary_conf = 0.95
         
-        # 6. Grad-CAM Overlay Generation (Explainable AI)
+        # 6. Grad-CAM & Damage Localization Engine
         active_model = secondary_model if (is_damaged and secondary_model is not None) else binary_model
         heatmap_grid = compute_gradcam(active_model, batch_input, target_res=(224, 224))
         
         # Overlay heatmap on resized enhanced image
         heatmap_overlay_rgb = apply_heatmap_overlay(img_resized, heatmap_grid)
         heatmap_base64 = to_base64_url(heatmap_overlay_rgb)
+
+        # Compute Localization metrics & Overlay
+        loc_res = compute_damage_localization(img_resized, heatmap_grid)
+        localized_overlay_rgb = loc_res["overlay_img"]
+        localized_base64 = to_base64_url(localized_overlay_rgb)
+        
+        coverage_pct = loc_res["coverage_pct"]
+        num_regions = loc_res["num_regions"]
+        largest_region_pct = loc_res["largest_region_pct"]
+        affected_area = loc_res["affected_area"]
 
         # 7. Severity Estimation (Explainable logic)
         severity = "None"
@@ -534,7 +620,36 @@ async def analyze_vehicle(
             else:
                 severity = "Moderate"
 
-        # 8. Deterministic Health Score Calculation
+        # 8. Driving Safety Logic
+        roadworthy = "Yes"
+        night_safe = "Yes"
+        highway_safe = "Yes"
+        long_distance_safe = "Yes"
+        safety_reason = "No anomalies detected. Roadworthiness parameters normal."
+        
+        if is_damaged:
+            if severity == "Severe":
+                roadworthy = "No"
+                night_safe = "No"
+                highway_safe = "No"
+                long_distance_safe = "No"
+                safety_reason = (
+                    f"Severe damage detected on safety-critical components ({secondary_label}). "
+                    "Driving is prohibited until structural components are inspected and ADAS cameras are recalibrated."
+                )
+            elif severity == "Moderate" and secondary_label in ["glass", "bumper"]:
+                roadworthy = "Yes"
+                night_safe = "No" if secondary_label == "glass" else "Yes"
+                highway_safe = "No"
+                long_distance_safe = "No"
+                safety_reason = (
+                    f"Moderate {secondary_label} deformation. Panel could detach under highway drag. "
+                    "Windshield/headlight refraction pattern might degrade night visibility."
+                )
+            else: # Minor cosmetic
+                safety_reason = "Cosmetic damage only. Headlights, bumpers, and structural frame elements remain fully functional."
+
+        # 9. Deterministic Health Score Calculation
         health_score = 100
         health_explanation = "Vehicle panel integrity is normal. No structural anomalies detected."
         
@@ -545,17 +660,28 @@ async def analyze_vehicle(
             sev_multipliers = {"Minor": 0.5, "Moderate": 1.0, "Severe": 2.0}
             multiplier = sev_multipliers.get(severity, 1.0)
             
-            conf_penalty = (1.0 - secondary_conf) * 10
+            conf_penalty = (1.0 - secondary_conf) * 15
+            coverage_penalty = coverage_pct * 1.5
             
-            total_penalty = (base_penalty * multiplier) + conf_penalty + 5
+            safety_penalty = 0
+            if roadworthy == "No":
+                safety_penalty += 15
+            if night_safe == "No":
+                safety_penalty += 5
+            if highway_safe == "No":
+                safety_penalty += 5
+                
+            total_penalty = (base_penalty * multiplier) + conf_penalty + coverage_penalty + safety_penalty
             health_score = max(0, int(100 - total_penalty))
             
             health_explanation = (
-                f"Health score reduced due to detected {secondary_label} ({severity} severity) "
-                f"exhibiting a base penalty of {base_penalty * multiplier:.1f} and confidence variance penalty of {conf_penalty:.1f}."
+                f"Base Penalty: {base_penalty * multiplier:.1f} (Category: {secondary_label}, Severity: {severity}). "
+                f"Confidence Penalty: {conf_penalty:.1f}. "
+                f"Coverage Penalty: {coverage_penalty:.1f} (Coverage: {coverage_pct}%). "
+                f"Safety Risk Penalty: {safety_penalty:.1f}."
             )
 
-        # 9. Repair Cost Engine
+        # 10. Repair Cost Engine
         cost_breakdown = {"parts": 0, "labour": 0, "paint": 0, "gst": 0, "total": 0}
         if is_damaged:
             cat_rates = REPAIR_DATABASE.get(secondary_label, REPAIR_DATABASE["damage"])
@@ -577,7 +703,7 @@ async def analyze_vehicle(
                 "total": total_cost
             }
 
-        # 10. Repair Time Engine
+        # 11. Repair Time Engine
         working_hours = 0
         repair_days = 0
         expected_completion = "N/A"
@@ -596,7 +722,7 @@ async def analyze_vehicle(
             completion_date = datetime.date.today() + datetime.timedelta(days=repair_days)
             expected_completion = completion_date.strftime("%Y-%m-%d")
 
-        # 11. Insurance Engine
+        # 12. Insurance Engine
         recommendation = "Self Repair Recommended"
         ins_reason = "No claims necessary. Panels are clean."
         req_docs = []
@@ -626,35 +752,6 @@ async def analyze_vehicle(
                 )
                 req_docs.append("First Information Report (FIR) copy - mandatory for major crash events")
 
-        # 12. Driving Safety Logic
-        roadworthy = "Yes"
-        night_safe = "Yes"
-        highway_safe = "Yes"
-        long_distance_safe = "Yes"
-        safety_reason = "No anomalies detected. Roadworthiness parameters normal."
-        
-        if is_damaged:
-            if severity == "Severe":
-                roadworthy = "No"
-                night_safe = "No"
-                highway_safe = "No"
-                long_distance_safe = "No"
-                safety_reason = (
-                    f"Severe damage detected on safety-critical components ({secondary_label}). "
-                    "Driving is prohibited until structural components are inspected and ADAS cameras are recalibrated."
-                )
-            elif severity == "Moderate" and secondary_label in ["glass", "bumper"]:
-                roadworthy = "Yes"
-                night_safe = "No" if secondary_label == "glass" else "Yes"
-                highway_safe = "No"
-                long_distance_safe = "No"
-                safety_reason = (
-                    f"Moderate {secondary_label} deformation. Panel could detach under highway drag. "
-                    "Windshield/headlight refraction pattern might degrade night visibility."
-                )
-            else: # Minor cosmetic
-                safety_reason = "Cosmetic damage only. Headlights, bumpers, and structural frame elements remain fully functional."
-
         # 13. Maintenance Roadmap
         maintenance_roadmap = [
             "Keep records of this digital inspection log for claims and future resale documentation."
@@ -673,7 +770,8 @@ async def analyze_vehicle(
             "images": {
                 "original": original_base64,
                 "enhanced": enhanced_base64,
-                "heatmap": heatmap_base64
+                "heatmap": heatmap_base64,
+                "localized": localized_base64
             },
             "primary_detection": {
                 "label": primary_label,
@@ -716,6 +814,12 @@ async def analyze_vehicle(
                   "highway_safe": highway_safe,
                   "long_distance_safe": long_distance_safe,
                   "reason": safety_reason
+                },
+                "localization": {
+                  "coverage_pct": coverage_pct,
+                  "num_regions": num_regions,
+                  "largest_region_pct": largest_region_pct,
+                  "affected_area": affected_area
                 },
                 "maintenance": maintenance_roadmap,
                 "description": get_damage_explanation(secondary_label, severity),
