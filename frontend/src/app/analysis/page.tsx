@@ -7,17 +7,24 @@ import {
   AlertCircle, ServerCrash, RefreshCw, Sparkles, CheckCircle2, Cpu, 
   FileText, Printer, ShieldAlert, Check, ShieldCheck, HelpCircle, 
   Activity, Clock, FileCheck, Landmark, ShieldX, Wrench, ChevronDown, ChevronUp,
-  User, Car, Calendar, Hash, Gauge, Image as ImageIcon, Download, Heart, ArrowLeft, ArrowRight
+  User, Car, Calendar, Hash, Gauge, Image as ImageIcon, Download, Heart,
+  ArrowLeft, ArrowRight
 } from "lucide-react";
 
-// Live API response structure from FastAPI /analyze (multi-stage)
+// Live API response structure from FastAPI /analyze (multi-stage + image enhancement + explainability)
 interface LiveAPIResponse {
   quality: {
     resolution: string;
     brightness: number;
     blur_score: number;
+    rating: "Excellent" | "Good" | "Fair" | "Poor" | "Rejected";
     suitability: string;
     reason: string;
+  };
+  images: {
+    original: string;
+    enhanced: string;
+    heatmap: string;
   };
   primary_detection: {
     label: "Damage" | "No Damage" | "Rejected";
@@ -94,6 +101,7 @@ export default function AnalysisPage() {
 
   // Analysis process states
   const [image, setImage] = useState<File | null>(null);
+  const [imageSrcBase64, setImageSrcBase64] = useState<string>("");
   const [imageResolution, setImageResolution] = useState<string>("Detecting...");
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [loadingStep, setLoadingStep] = useState(0);
@@ -107,10 +115,6 @@ export default function AnalysisPage() {
 
   const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
 
-  const handlePrintPDF = () => {
-    window.print();
-  };
-
   // Cycle through loading steps during analysis (Phase 4)
   useEffect(() => {
     let interval: NodeJS.Timeout;
@@ -122,6 +126,10 @@ export default function AnalysisPage() {
     }
     return () => clearInterval(interval);
   }, [isAnalyzing]);
+
+  const handlePrintPDF = () => {
+    window.print();
+  };
 
   // Form Validation Check
   const isFormValid = () => {
@@ -144,7 +152,7 @@ export default function AnalysisPage() {
     setError(null);
     setFallbackMode(false);
 
-    // Read image resolution using client-side image loader
+    // Read image resolution and save base64 URL representation
     const reader = new FileReader();
     reader.onload = (e) => {
       const img = new window.Image();
@@ -152,6 +160,7 @@ export default function AnalysisPage() {
         setImageResolution(`${img.naturalWidth} x ${img.naturalHeight} px`);
       };
       img.src = e.target?.result as string;
+      setImageSrcBase64(e.target?.result as string);
     };
     reader.readAsDataURL(file);
   };
@@ -159,6 +168,7 @@ export default function AnalysisPage() {
   const handleClear = () => {
     setImage(null);
     setImageResolution("Detecting...");
+    setImageSrcBase64("");
     setApiResponse(null);
     setError(null);
     setFallbackMode(false);
@@ -198,7 +208,7 @@ export default function AnalysisPage() {
       const data: LiveAPIResponse = await response.json();
       setApiResponse(data);
       
-      // If suitable, go to dashboard. If rejected, stay here to show quality details.
+      // If suitable, go to dashboard.
       if (data.quality.suitability === "Suitable" && data.report) {
         setCurrentStep(3);
         // Save to browser history
@@ -238,7 +248,7 @@ export default function AnalysisPage() {
     const label = "damage";
     const secLabel = isBumper ? "bumper" : "scratch";
     const secConf = 0.9421;
-    const severity: string = isBumper ? "Severe" : "Minor";
+    const severity = (isBumper ? "Severe" : "Minor") as string;
 
     // 100% deterministic local rules mirroring report.py & main.py engines
     const basePenalties: Record<string, number> = { scratch: 10, dent: 15, bumper: 20, glass: 25 };
@@ -271,8 +281,14 @@ export default function AnalysisPage() {
         resolution: imageResolution,
         brightness: 110.45,
         blur_score: 85.32,
+        rating: "Good",
         suitability: "Suitable",
         reason: "Image meets quality standards."
+      },
+      images: {
+        original: imageSrcBase64,
+        enhanced: imageSrcBase64,
+        heatmap: imageSrcBase64
       },
       primary_detection: {
         label: "Damage",
@@ -393,14 +409,14 @@ export default function AnalysisPage() {
     const newRecord = {
       id: `validauto-scan-${Date.now()}`,
       timestamp: result.report.timestamp,
-      filename: result.report.vehicle_info.reg_number, // Unique key registration
+      filename: result.report.vehicle_info.reg_number,
       ownerName: result.report.vehicle_info.owner_name,
       imageSrc: thumbnailSrc,
       damage: result.secondary_classification.label,
       confidence: result.secondary_classification.confidence,
       severity: result.report.severity,
       healthScore: result.report.health_score,
-      minCost: result.report.repair_costs.total, // Storing flat cost
+      minCost: result.report.repair_costs.total,
       maxCost: result.report.repair_costs.total
     };
 
@@ -665,11 +681,11 @@ export default function AnalysisPage() {
               <div className="glass-panel rounded-2xl p-6 border-brand-rose/30 bg-brand-rose/5 space-y-4 animate-fade-in">
                 <div className="flex items-center gap-2.5 text-brand-rose">
                   <ShieldAlert className="h-5.5 w-5.5" />
-                  <span className="font-extrabold text-sm uppercase tracking-wider">Image Quality Rejected</span>
+                  <span className="font-extrabold text-sm uppercase tracking-wider">Image Genuinely Unusable</span>
                 </div>
                 
                 <p className="text-xs text-slate-300 leading-relaxed">
-                  The neural pipeline rejected the uploaded photo because it failed Stage 3 Suitability constraints:
+                  The neural pipeline rejected the uploaded photo because it failed core readability constraints:
                   <strong className="block text-brand-rose mt-1">{apiResponse.quality.reason}</strong>
                 </p>
 
@@ -680,11 +696,11 @@ export default function AnalysisPage() {
                   </div>
                   <div>
                     <span className="block text-slate-500 text-[10px] uppercase">Brightness Index</span>
-                    <span className="font-bold text-white">{apiResponse.quality.brightness} (Goal: 20-250)</span>
+                    <span className="font-bold text-white">{apiResponse.quality.brightness}</span>
                   </div>
                   <div className="col-span-2">
-                    <span className="block text-slate-500 text-[10px] uppercase">Laplacian Blur Score</span>
-                    <span className="font-bold text-white">{apiResponse.quality.blur_score} (Goal: &gt;15)</span>
+                    <span className="block text-slate-500 text-[10px] uppercase">Blur score (Laplacian)</span>
+                    <span className="font-bold text-white">{apiResponse.quality.blur_score}</span>
                   </div>
                 </div>
 
@@ -873,11 +889,53 @@ export default function AnalysisPage() {
                 </div>
               </div>
 
-              {/* 3. Repair Intelligence (Detailed cost breakdown) */}
+              {/* 3. Visual Evidence & Neural Gradients (CLAHE original vs enhanced vs heatmap) */}
+              <div className="space-y-3">
+                <h4 className="text-xs font-black text-brand-cyan print:text-slate-800 uppercase tracking-widest flex items-center gap-1.5">
+                  <ImageIcon className="h-4 w-4" />
+                  3. Visual Evidence & Neural Gradients (Explainable AI)
+                </h4>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-5 print:grid-cols-3">
+                  {/* Original image */}
+                  <div className="rounded-xl border border-white/5 bg-slate-900/50 p-2.5 text-center print:bg-slate-50 print:border-slate-300 print:text-black">
+                    <span className="block text-[9px] text-slate-500 uppercase font-bold mb-2">Original Scanned Photo</span>
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img 
+                      src={apiResponse.images.original} 
+                      alt="Original Scan" 
+                      className="rounded-lg w-full aspect-square object-cover border border-white/10 print:border-slate-300" 
+                    />
+                  </div>
+
+                  {/* Enhanced image */}
+                  <div className="rounded-xl border border-white/5 bg-slate-900/50 p-2.5 text-center print:bg-slate-50 print:border-slate-300 print:text-black">
+                    <span className="block text-[9px] text-slate-500 uppercase font-bold mb-2">Enhanced Processing Image</span>
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img 
+                      src={apiResponse.images.enhanced} 
+                      alt="Enhanced Scan" 
+                      className="rounded-lg w-full aspect-square object-cover border border-white/10 print:border-slate-300" 
+                    />
+                  </div>
+
+                  {/* Heatmap overlay */}
+                  <div className="rounded-xl border border-white/5 bg-slate-900/50 p-2.5 text-center print:bg-slate-50 print:border-slate-300 print:text-black">
+                    <span className="block text-[9px] text-slate-500 uppercase font-bold mb-2">Damage Heatmap (Grad-CAM)</span>
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img 
+                      src={apiResponse.images.heatmap} 
+                      alt="Damage Heatmap" 
+                      className="rounded-lg w-full aspect-square object-cover border border-white/10 print:border-slate-300" 
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* 4. Repair Cost Intelligence */}
               <div className="space-y-3">
                 <h4 className="text-xs font-black text-brand-cyan print:text-slate-800 uppercase tracking-widest flex items-center gap-1.5">
                   <Landmark className="h-4 w-4" />
-                  3. Repair Cost Intelligence
+                  4. Repair Cost Intelligence
                 </h4>
                 <div className="grid grid-cols-1 md:grid-cols-12 gap-5 print:grid-cols-12">
                   <div className="md:col-span-7 print:col-span-7 rounded-xl bg-white/5 p-4 border border-white/5 space-y-3.5 print:bg-slate-50 print:border-slate-300 print:text-black">
@@ -928,11 +986,11 @@ export default function AnalysisPage() {
                 </div>
               </div>
 
-              {/* 4. Insurance Readiness */}
+              {/* 5. Insurance Claims Assessment */}
               <div className="space-y-3">
                 <h4 className="text-xs font-black text-brand-cyan print:text-slate-800 uppercase tracking-widest flex items-center gap-1.5">
                   <Landmark className="h-4 w-4" />
-                  4. Insurance Claims Assessment
+                  5. Insurance Claims Assessment
                 </h4>
                 <div className="grid grid-cols-1 md:grid-cols-12 gap-5 print:grid-cols-12">
                   <div className="md:col-span-7 print:col-span-7 rounded-xl bg-white/5 p-4 border border-white/5 space-y-2 print:bg-slate-50 print:border-slate-300 print:text-black">
@@ -969,11 +1027,11 @@ export default function AnalysisPage() {
                 </div>
               </div>
 
-              {/* 5. Maintenance Recommendations */}
+              {/* 6. Maintenance & Prevention */}
               <div className="space-y-3">
                 <h4 className="text-xs font-black text-brand-cyan print:text-slate-800 uppercase tracking-widest flex items-center gap-1.5">
                   <Wrench className="h-4 w-4" />
-                  5. Maintenance & Prevention Recommendations
+                  6. Maintenance & Prevention Recommendations
                 </h4>
                 <div className="rounded-xl bg-white/5 p-4 border border-white/5 print:bg-slate-50 print:border-slate-300 print:text-black">
                   <ul className="space-y-2 text-xs text-slate-300 print:text-slate-800">
@@ -987,11 +1045,11 @@ export default function AnalysisPage() {
                 </div>
               </div>
 
-              {/* 6. Executive Summary */}
+              {/* 7. Executive Audit Summary */}
               <div className="space-y-3">
                 <h4 className="text-xs font-black text-brand-cyan print:text-slate-800 uppercase tracking-widest flex items-center gap-1.5">
                   <FileText className="h-4 w-4" />
-                  6. Executive Audit Summary
+                  7. Executive Audit Summary
                 </h4>
                 <div className="rounded-xl bg-white/5 p-4 border border-white/5 space-y-3 print:bg-slate-50 print:border-slate-300 print:text-black">
                   <p className="text-xs leading-relaxed text-slate-300 print:text-slate-800">
@@ -1006,11 +1064,11 @@ export default function AnalysisPage() {
                 </div>
               </div>
 
-              {/* 7. Driving Safety Block */}
+              {/* 8. Driving Safety Block */}
               <div className="space-y-3">
                 <h4 className="text-xs font-black text-brand-cyan print:text-slate-800 uppercase tracking-widest flex items-center gap-1.5">
                   <ShieldAlert className="h-4 w-4" />
-                  7. Driving Safety & Roadworthiness
+                  8. Driving Safety & Roadworthiness
                 </h4>
                 <div className="rounded-xl bg-white/5 p-4 border border-white/5 space-y-4 print:bg-slate-50 print:border-slate-300 print:text-black">
                   <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 text-center text-xs font-bold">
@@ -1045,33 +1103,54 @@ export default function AnalysisPage() {
                 </div>
               </div>
 
-              {/* Image Quality Report Section (OpenCV stats) */}
+              {/* 9. Image Quality Validation report (OpenCV stats + warning system) */}
               <div className="space-y-3">
                 <h4 className="text-xs font-black text-brand-cyan print:text-slate-800 uppercase tracking-widest flex items-center gap-1.5">
                   <ImageIcon className="h-4 w-4" />
-                  8. Image Quality Validation report (OpenCV)
+                  9. Image Quality Validation report (OpenCV)
                 </h4>
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-4 rounded-xl bg-white/5 p-4 border border-white/5 print:bg-slate-50 print:border-slate-300 print:text-black print:p-3">
+                <div className="grid grid-cols-2 md:grid-cols-5 gap-4 rounded-xl bg-white/5 p-4 border border-white/5 print:bg-slate-50 print:border-slate-300 print:text-black print:p-3 print:grid-cols-5">
                   <div>
-                    <span className="block text-[8px] text-slate-500 uppercase">Image Resolution</span>
+                    <span className="block text-[8px] text-slate-500 uppercase font-bold">Image Resolution</span>
                     <span className="font-bold text-white text-xs print:text-black">{apiResponse.quality.resolution}</span>
                   </div>
                   <div>
-                    <span className="block text-[8px] text-slate-500 uppercase">Mean Brightness</span>
+                    <span className="block text-[8px] text-slate-500 uppercase font-bold">Mean Brightness</span>
                     <span className="font-bold text-white text-xs print:text-black">{apiResponse.quality.brightness}</span>
                   </div>
                   <div>
-                    <span className="block text-[8px] text-slate-500 uppercase">Laplacian Focus score</span>
+                    <span className="block text-[8px] text-slate-500 uppercase font-bold">Laplacian Focus score</span>
                     <span className="font-bold text-white text-xs print:text-black">{apiResponse.quality.blur_score}</span>
                   </div>
                   <div>
-                    <span className="block text-[8px] text-slate-500 uppercase">Suitability rating</span>
+                    <span className="block text-[8px] text-slate-500 uppercase font-bold">Quality Rating</span>
+                    <span className={`font-extrabold text-xs ${
+                      apiResponse.quality.rating === "Excellent" || apiResponse.quality.rating === "Good" ? "text-brand-emerald" : "text-brand-amber animate-pulse"
+                    }`}>
+                      {apiResponse.quality.rating}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="block text-[8px] text-slate-500 uppercase font-bold">Suitability Rating</span>
                     <span className="font-extrabold text-brand-emerald text-xs print:text-brand-indigo">{apiResponse.quality.suitability}</span>
                   </div>
                 </div>
+
+                {/* Quality Warn Indicator */}
+                {(apiResponse.quality.rating === "Fair" || apiResponse.quality.rating === "Poor") && (
+                  <div className="flex items-start gap-2.5 rounded-xl bg-brand-amber/10 border border-brand-amber/20 p-3.5 text-xs text-brand-amber print:hidden">
+                    <AlertCircle className="h-5 w-5 shrink-0 mt-0.5" />
+                    <div>
+                      <span className="font-bold block">Non-optimal Image Quality Warning ({apiResponse.quality.rating})</span>
+                      <p className="text-slate-300 mt-1">
+                        OpenCV filters detected low resolution or non-optimal lighting. Auto-enhancements (CLAHE, scaling, and bilateral noise reduction) were run to ensure model compatibility. Please inspect output closely.
+                      </p>
+                    </div>
+                  </div>
+                )}
               </div>
 
-              {/* 8. Technical Details (Collapsible in UI, visible in Print) */}
+              {/* 10. Technical Details (Collapsible in UI, visible in Print) */}
               <div className="border border-white/10 rounded-xl overflow-hidden bg-black/20 print:border-slate-300 print:bg-slate-50">
                 <button 
                   onClick={() => setTechDetailsOpen(!techDetailsOpen)}
@@ -1079,7 +1158,7 @@ export default function AnalysisPage() {
                 >
                   <div className="flex items-center gap-2">
                     <Cpu className="h-4.5 w-4.5 text-brand-cyan" />
-                    <span>9. Neural Model Technical details</span>
+                    <span>10. Neural Model Technical details</span>
                   </div>
                   {techDetailsOpen ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
                 </button>
