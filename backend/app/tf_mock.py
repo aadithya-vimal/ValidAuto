@@ -39,6 +39,19 @@ class Dropout:
     def __init__(self, rate):
         self.rate = rate
 
+class History:
+    """
+    Emulates the tf.keras.callbacks.History object.
+    Holds the metrics logged across training epochs.
+    """
+    def __init__(self):
+        self.history = {
+            "accuracy": [],
+            "val_accuracy": [],
+            "loss": [],
+            "val_loss": []
+        }
+
 class Sequential:
     """
     Emulates tf.keras.models.Sequential.
@@ -70,7 +83,7 @@ class Sequential:
     def fit(self, x, y, validation_data=None, epochs=5, batch_size=32):
         """
         Trains the softmax classification weights using gradient descent.
-        Outputs standard training telemetry logs matching real Keras output.
+        Logs metrics inside a History object.
         """
         print(f"Training on {len(x)} samples, validating on {len(validation_data[0]) if validation_data else 0} samples...")
         
@@ -89,6 +102,9 @@ class Sequential:
         np.random.seed(42)
         self.weights = np.random.randn(num_features, num_classes) * 0.001
         self.bias = np.zeros(num_classes)
+
+        # Instantiate emulated History object
+        history_obj = History()
 
         lr = 0.05
         for epoch in range(epochs):
@@ -114,6 +130,10 @@ class Sequential:
             self.weights -= lr * dw
             self.bias -= lr * db
 
+            # Log metrics
+            history_obj.history["loss"].append(float(loss))
+            history_obj.history["accuracy"].append(float(accuracy))
+
             val_log = ""
             if validation_data:
                 val_x, val_y = validation_data
@@ -132,11 +152,14 @@ class Sequential:
                 val_preds = np.argmax(val_probs, axis=1)
                 val_targets = np.argmax(val_y_onehot, axis=1)
                 val_accuracy = np.mean(val_preds == val_targets)
+                
                 val_log = f" - val_loss: {val_loss:.4f} - val_accuracy: {val_accuracy:.4f}"
+                history_obj.history["val_loss"].append(float(val_loss))
+                history_obj.history["val_accuracy"].append(float(val_accuracy))
 
             print(f"Epoch {epoch+1}/{epochs} - loss: {loss:.4f} - accuracy: {accuracy:.4f}{val_log}")
 
-        return self
+        return history_obj
 
     def save(self, filepath):
         """
