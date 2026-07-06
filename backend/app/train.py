@@ -14,9 +14,19 @@ except ImportError:
 
 # Model Configurations
 IMAGE_SIZE = (224, 224)
-CLASSES = ['00-damage', '01-whole']
 MODEL_PATH = os.path.join(os.path.dirname(__file__), 'vehicle_damage_model.h5')
 FRONTEND_PUBLIC_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', 'frontend', 'public'))
+
+def discover_classes(dataset_dir):
+    """
+    Dynamically lists the subdirectories in the training split directory to discover classes.
+    """
+    train_dir = os.path.join(dataset_dir, 'training')
+    if not os.path.exists(train_dir):
+        train_dir = os.path.join(dataset_dir, 'validation')
+    if os.path.exists(train_dir):
+        return sorted([d for d in os.listdir(train_dir) if os.path.isdir(os.path.join(train_dir, d))])
+    raise FileNotFoundError(f"Could not discover classes: training directory '{train_dir}' does not exist.")
 
 def augment_image(img_pil):
     """
@@ -38,56 +48,16 @@ def augment_image(img_pil):
     
     return img_pil
 
-def create_synthetic_dataset(base_dir):
-    """
-    Generates dummy vehicle panel image splits (scratched, dented, clean)
-    to facilitate self-contained model training demonstrations.
-    """
-    print("Generating synthetic vehicle panels dataset...")
-    
-    splits = ['train', 'val', 'test']
-    counts = {'train': 45, 'val': 15, 'test': 15}
-    
-    for split in splits:
-        for cls in CLASSES:
-            path = os.path.join(base_dir, split, cls)
-            os.makedirs(path, exist_ok=True)
-            
-            for i in range(counts[split]):
-                # Create a base gray panel representing vehicle paint
-                img = Image.new("RGB", IMAGE_SIZE, color=(140, 150, 160))
-                draw = ImageDraw.Draw(img)
-                
-                if cls == 'scratch':
-                    start_x = np.random.randint(20, 100)
-                    start_y = np.random.randint(20, 100)
-                    draw.line([start_x, start_y, start_x + 80, start_y + 80], fill=(50, 50, 50), width=3)
-                    draw.line([start_x + 5, start_y, start_x + 85, start_y + 80], fill=(220, 220, 220), width=1)
-                
-                elif cls == 'dent':
-                    center = (np.random.randint(70, 150), np.random.randint(70, 150))
-                    radius = np.random.randint(30, 60)
-                    draw.ellipse([center[0] - radius, center[1] - radius, center[0] + radius, center[1] + radius], fill=(110, 120, 130))
-                    draw.ellipse([center[0] - radius + 10, center[1] - radius + 10, center[0] + radius - 10, center[1] + radius - 10], fill=(90, 100, 110))
-                
-                # Save primary image
-                img.save(os.path.join(path, f"{cls}_{i}.jpg"))
-                
-                # Data Augmentation: For training split, generate and save augmented copies
-                if split == 'train':
-                    augmented_img = augment_image(img)
-                    augmented_img.save(os.path.join(path, f"{cls}_{i}_aug.jpg"))
-                
-    print(f"Synthetic dataset created successfully in '{base_dir}'")
+# Synthetic image generator has been completely removed to comply with Kaggle-only requirement
 
-def load_and_preprocess_data(base_dir, split):
+def load_and_preprocess_data(base_dir, split, classes):
     """
     Loads images from folder splits, resizes them, and normalizes pixel values.
     """
     x_data = []
     y_data = []
     
-    for label_idx, cls in enumerate(CLASSES):
+    for label_idx, cls in enumerate(classes):
         folder_path = os.path.join(base_dir, split, cls)
         if not os.path.exists(folder_path):
             print(f"[Warning] Class folder not found: {folder_path}")
@@ -113,13 +83,13 @@ def load_and_preprocess_data(base_dir, split):
             
     return np.array(x_data, dtype=np.float32), np.array(y_data, dtype=np.float32)
 
-def calculate_metrics(y_true, y_pred_probs):
+def calculate_metrics(y_true, y_pred_probs, classes):
     """
     Computes classification evaluation metrics: Accuracy, Precision, Recall, F1-Score,
     and a standard Confusion Matrix.
     """
     y_pred = np.argmax(y_pred_probs, axis=1)
-    num_classes = len(CLASSES)
+    num_classes = len(classes)
     
     # 1. Confusion Matrix
     cm = np.zeros((num_classes, num_classes), dtype=int)
@@ -220,7 +190,7 @@ def draw_accuracy_graph(train_accs, val_accs, filepath):
     img.save(filepath)
     print(f"[Graph] Saved accuracy graph to '{filepath}'")
 
-def draw_confusion_matrix(cm, filepath):
+def draw_confusion_matrix(cm, filepath, classes):
     """
     Plots the confusion matrix cells and grid ticks using PIL drawing utilities.
     Saves a sleek dark-themed confusion matrix grid.
@@ -229,7 +199,7 @@ def draw_confusion_matrix(cm, filepath):
     img = Image.new("RGB", (width, height), color=(15, 23, 42)) # Slate 900
     draw = ImageDraw.Draw(img)
     
-    grid_size = len(CLASSES)
+    grid_size = len(classes)
     cell_w = 80
     start_x = 130
     start_y = 110
@@ -241,7 +211,7 @@ def draw_confusion_matrix(cm, filepath):
     draw.text((width // 2 - 40, height - 30), "Predicted Class", fill=(6, 182, 212))
     draw.text((20, height // 2 - 25), "True\nClass", fill=(99, 102, 241))
     
-    for idx, cls in enumerate(CLASSES):
+    for idx, cls in enumerate(classes):
         # Column text labels
         draw.text((start_x + idx * cell_w + cell_w // 2 - 18, start_y - 25), cls, fill=(248, 250, 252))
         # Row text labels
@@ -286,12 +256,16 @@ def train_vehicle_damage_classifier():
         raise FileNotFoundError(f"Kaggle dataset directory not found at '{dataset_dir}'. Please ensure it is downloaded.")
         
     try:
+        # Discover classes dynamically from dataset folder
+        classes = discover_classes(dataset_dir)
+        print(f"Discovered dataset classes dynamically: {classes}")
+
         # 1. Preprocess data
         print("Loading and preprocessing datasets from Kaggle dataset...")
-        x_train, y_train = load_and_preprocess_data(dataset_dir, 'training')
+        x_train, y_train = load_and_preprocess_data(dataset_dir, 'training', classes)
         
         # Load validation folder and split it 50/50 for val and test
-        x_val_all, y_val_all = load_and_preprocess_data(dataset_dir, 'validation')
+        x_val_all, y_val_all = load_and_preprocess_data(dataset_dir, 'validation', classes)
         
         np.random.seed(42)
         indices = np.arange(len(x_val_all))
@@ -316,9 +290,9 @@ def train_vehicle_damage_classifier():
             tf.GlobalAveragePooling2D(),
             tf.Dropout(0.2),
             tf.Dense(128, activation='relu'),
-            tf.Dense(len(CLASSES), activation='softmax')
+            tf.Dense(len(classes), activation='softmax')
         ])
-        model.classes = CLASSES
+        model.classes = classes
         
         model.compile(optimizer='adam', loss='categorical_crossentropy', metrics=['accuracy'])
         
@@ -334,7 +308,7 @@ def train_vehicle_damage_classifier():
         # 4. Evaluate model and compute test split metrics
         print("Evaluating model metrics on test set...")
         test_predictions = model.predict(x_test)
-        metrics = calculate_metrics(y_test, test_predictions)
+        metrics = calculate_metrics(y_test, test_predictions, classes)
         
         print("\n================ EVALUATION METRICS ==================")
         print(f"Accuracy:  {metrics['accuracy'] * 100:.2f}%")
@@ -355,7 +329,7 @@ def train_vehicle_damage_classifier():
             cm_path = os.path.join(FRONTEND_PUBLIC_DIR, 'confusion_matrix.png')
             
             draw_accuracy_graph(history.history["accuracy"], history.history["val_accuracy"], graph_path)
-            draw_confusion_matrix(metrics["confusion_matrix"], cm_path)
+            draw_confusion_matrix(metrics["confusion_matrix"], cm_path, classes)
         else:
             print(f"[Warning] Frontend public directory not found at '{FRONTEND_PUBLIC_DIR}'. Skipping metric curves generation.")
             
