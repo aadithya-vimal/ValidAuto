@@ -7,11 +7,14 @@ from PIL import Image, ImageDraw, ImageEnhance
 try:
     import tensorflow as tf
 except ImportError:
-    import tf_mock as tf
+    try:
+        import tf_mock as tf
+    except ImportError:
+        from app import tf_mock as tf
 
 # Model Configurations
 IMAGE_SIZE = (224, 224)
-CLASSES = ['scratch', 'dent', 'none']
+CLASSES = ['00-damage', '01-whole']
 MODEL_PATH = os.path.join(os.path.dirname(__file__), 'vehicle_damage_model.h5')
 FRONTEND_PUBLIC_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', 'frontend', 'public'))
 
@@ -86,18 +89,27 @@ def load_and_preprocess_data(base_dir, split):
     
     for label_idx, cls in enumerate(CLASSES):
         folder_path = os.path.join(base_dir, split, cls)
+        if not os.path.exists(folder_path):
+            print(f"[Warning] Class folder not found: {folder_path}")
+            continue
         for filename in os.listdir(folder_path):
             file_path = os.path.join(folder_path, filename)
+            if not os.path.isfile(file_path):
+                continue
             
-            # Load and Resize to (224, 224)
-            img = tf.load_img(file_path, target_size=IMAGE_SIZE)
-            img_arr = tf.img_to_array(img)
-            
-            # Preprocess / Normalize pixel entries to [0.0, 1.0] range
-            img_arr = img_arr / 255.0
-            
-            x_data.append(img_arr)
-            y_data.append(label_idx)
+            try:
+                # Load and Resize to (224, 224)
+                img = tf.load_img(file_path, target_size=IMAGE_SIZE)
+                img_arr = tf.img_to_array(img)
+                
+                # Preprocess / Normalize pixel entries to [0.0, 1.0] range
+                img_arr = img_arr / 255.0
+                
+                x_data.append(img_arr)
+                y_data.append(label_idx)
+            except Exception as e:
+                print(f"[Warning] Failed to load image {file_path}: {e}")
+                continue
             
     return np.array(x_data, dtype=np.float32), np.array(y_data, dtype=np.float32)
 
@@ -267,23 +279,36 @@ def train_vehicle_damage_classifier():
     Main training execution function. Builds, pre-processes, fits, evaluates,
     and saves metric graphics to public directory.
     """
-    dataset_dir = os.path.join(os.path.dirname(__file__), 'temp_dataset')
+    # Use the downloaded Kaggle dataset directly
+    dataset_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "data1a"))
     
+    if not os.path.exists(dataset_dir):
+        raise FileNotFoundError(f"Kaggle dataset directory not found at '{dataset_dir}'. Please ensure it is downloaded.")
+        
     try:
-        # 1. Create dataset (with inline data augmentation)
-        create_synthetic_dataset(dataset_dir)
+        # 1. Preprocess data
+        print("Loading and preprocessing datasets from Kaggle dataset...")
+        x_train, y_train = load_and_preprocess_data(dataset_dir, 'training')
         
-        # 2. Preprocess data
-        print("Loading and preprocessing datasets...")
-        x_train, y_train = load_and_preprocess_data(dataset_dir, 'train')
-        x_val, y_val = load_and_preprocess_data(dataset_dir, 'val')
-        x_test, y_test = load_and_preprocess_data(dataset_dir, 'test')
+        # Load validation folder and split it 50/50 for val and test
+        x_val_all, y_val_all = load_and_preprocess_data(dataset_dir, 'validation')
         
-        print(f"Train features (augmented): {x_train.shape}, Labels: {y_train.shape}")
+        np.random.seed(42)
+        indices = np.arange(len(x_val_all))
+        np.random.shuffle(indices)
+        
+        split_idx = len(indices) // 2
+        val_indices = indices[:split_idx]
+        test_indices = indices[split_idx:]
+        
+        x_val, y_val = x_val_all[val_indices], y_val_all[val_indices]
+        x_test, y_test = x_val_all[test_indices], y_val_all[test_indices]
+        
+        print(f"Train features: {x_train.shape}, Labels: {y_train.shape}")
         print(f"Val features: {x_val.shape}, Labels: {y_val.shape}")
         print(f"Test features: {x_test.shape}, Labels: {y_test.shape}")
         
-        # 3. Model construction
+        # 2. Model construction
         base_model = tf.MobileNetV2(input_shape=(224, 224, 3), include_top=False, weights='imagenet')
         
         model = tf.Sequential([
@@ -293,10 +318,11 @@ def train_vehicle_damage_classifier():
             tf.Dense(128, activation='relu'),
             tf.Dense(len(CLASSES), activation='softmax')
         ])
+        model.classes = CLASSES
         
         model.compile(optimizer='adam', loss='categorical_crossentropy', metrics=['accuracy'])
         
-        # 4. Fit model and record training history
+        # 3. Fit model and record training history
         history = model.fit(
             x_train, 
             y_train, 
@@ -305,7 +331,7 @@ def train_vehicle_damage_classifier():
             batch_size=16
         )
         
-        # 5. Evaluate model and compute test split metrics
+        # 4. Evaluate model and compute test split metrics
         print("Evaluating model metrics on test set...")
         test_predictions = model.predict(x_test)
         metrics = calculate_metrics(y_test, test_predictions)
@@ -319,11 +345,11 @@ def train_vehicle_damage_classifier():
         print(metrics['confusion_matrix'])
         print("======================================================")
         
-        # 6. Save model weights
+        # 5. Save model weights
         model.save(MODEL_PATH)
         print(f"Successfully trained and saved model weights to '{MODEL_PATH}'")
         
-        # 7. Generate and save metric curves to frontend public folder
+        # 6. Generate and save metric curves to frontend public folder
         if os.path.exists(FRONTEND_PUBLIC_DIR):
             graph_path = os.path.join(FRONTEND_PUBLIC_DIR, 'accuracy_graph.png')
             cm_path = os.path.join(FRONTEND_PUBLIC_DIR, 'confusion_matrix.png')
@@ -332,12 +358,10 @@ def train_vehicle_damage_classifier():
             draw_confusion_matrix(metrics["confusion_matrix"], cm_path)
         else:
             print(f"[Warning] Frontend public directory not found at '{FRONTEND_PUBLIC_DIR}'. Skipping metric curves generation.")
-        
-    finally:
-        # Clean up temporary dataset folder
-        if os.path.exists(dataset_dir):
-            shutil.rmtree(dataset_dir)
-            print("Cleaned up temporary dataset directory.")
+            
+    except Exception as e:
+        print(f"[Error] Training failed: {e}")
+        raise e
 
 if __name__ == '__main__':
     train_vehicle_damage_classifier()
