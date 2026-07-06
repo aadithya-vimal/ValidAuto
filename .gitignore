@@ -23,3 +23,8 @@ backend/app/__pycache__/
 # OS Metadata
 .DS_Store
 Thumbs.db
+
+# Datasets and archives
+data1a/
+car-damage-dataset.zip
+backend/repomix-output.xml
