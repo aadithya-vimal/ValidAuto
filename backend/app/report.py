@@ -1,9 +1,23 @@
 # backend/app/report.py
 
+def resolve_type(damage_type: str) -> str:
+    """
+    Resolves dynamic class labels (e.g., '01-whole', '00-damage', 'clean') 
+    to generic fallback keys ('none', 'damage') or specific templates.
+    """
+    dmg_lower = damage_type.lower()
+    if any(w in dmg_lower for w in ["whole", "clean", "none"]):
+        return "none"
+    if dmg_lower in ["scratch", "dent"]:
+        return dmg_lower
+    return "damage"
+
 def get_damage_description(damage_type: str, severity: str, confidence: float) -> str:
     """
     Formulates a detailed description of the identified vehicle condition based on prediction confidence.
     """
+    resolved = resolve_type(damage_type)
+    
     templates = {
         "scratch": [
             "A surface scrape has been detected on the vehicle exterior paneling. The damage primarily impacts the clear coat and base paint layers.",
@@ -20,31 +34,28 @@ def get_damage_description(damage_type: str, severity: str, confidence: float) -
             "The vehicle panels show clean surface alignment and uniform paint layer reflectiveness.",
             "Visual inspection returns zero flags on surface scrapes or indentations."
         ],
-        "00-damage": [
+        "damage": [
             "A surface scrape or structural indentation has been detected on the vehicle exterior paneling. The damage primarily impacts the clear coat, base paint, or panel profile.",
             f"The scanning engine identified a {severity.lower()}-severity body panel damage on the vehicle skin with {confidence * 100:.1f}% confidence.",
             "Significant deformation or deep paint abrasion was detected on the vehicle exterior, compromising panel alignment and surface integrity."
-        ],
-        "01-whole": [
-            "No anomalies or body panel defects were detected by the computer vision scan.",
-            "The vehicle panels show clean surface alignment and uniform paint layer reflectiveness.",
-            "Visual inspection returns zero flags on surface scrapes or indentations."
         ]
     }
     
-    if damage_type not in templates:
+    if resolved not in templates:
         return "Unknown vehicle panel condition classification."
         
-    # Select template index based on severity
-    if damage_type in ["none", "01-whole"]:
-        return templates[damage_type][0]
+    if resolved == "none":
+        return templates["none"][0]
+        
     idx = 1 if severity == "Moderate" else (0 if severity == "Low" else 2)
-    return templates[damage_type][idx]
+    return templates[resolved][idx]
 
 def get_possible_cause(damage_type: str, severity: str) -> str:
     """
     Provides typical circumstances that cause the specified class and severity of damage.
     """
+    resolved = resolve_type(damage_type)
+    
     causes = {
         "scratch": {
             "Low": "Typically caused by brushing against light vegetation, abrasive washing brushes, key rings, or flying road grit.",
@@ -57,32 +68,27 @@ def get_possible_cause(damage_type: str, severity: str) -> str:
             "High": "Typically indicates moderate-to-high speed collision impact, striking structural bollards, or utility post collisions."
         },
         "none": {
-            "Low": "No causes to report. Panel integrity is normal.",
-            "Moderate": "No causes to report. Panel integrity is normal.",
-            "High": "No causes to report. Panel integrity is normal.",
             "None": "No causes to report. Panel integrity is normal."
         },
-        "00-damage": {
+        "damage": {
             "Low": "Typically caused by low-impact bumps, brushing against light vegetation, abrasive washes, or flying road grit.",
             "Moderate": "Often results from low-speed contact with shopping carts, bicycle handlebars, parking barriers, or door dings.",
             "High": "Usually caused by high-impact collisions, sliding against guard rails, keying vandalism, or striking structural posts."
-        },
-        "01-whole": {
-            "Low": "No causes to report. Panel integrity is normal.",
-            "Moderate": "No causes to report. Panel integrity is normal.",
-            "High": "No causes to report. Panel integrity is normal.",
-            "None": "No causes to report. Panel integrity is normal."
         }
     }
+    
+    if severity == "None" or resolved == "none":
+        return causes["none"]["None"]
+        
     sev_key = severity if severity in ["Low", "Moderate", "High"] else "Low"
-    if severity == "None" or damage_type in ["none", "01-whole"]:
-        return causes.get(damage_type, causes["none"])["None"]
-    return causes.get(damage_type, {}).get(sev_key, "Unknown cause factor.")
+    return causes.get(resolved, {}).get(sev_key, "Unknown cause factor.")
 
 def get_repair_recommendation(damage_type: str, severity: str) -> str:
     """
     Provides practical repair instructions based on severity level.
     """
+    resolved = resolve_type(damage_type)
+    
     recommendations = {
         "scratch": {
             "Low": "Apply clear coat scratch-remover rubbing compound, polish thoroughly using a microfiber buffer, and seal with wax.",
@@ -95,55 +101,53 @@ def get_repair_recommendation(damage_type: str, severity: str) -> str:
             "High": "Requires panel replacement or major stud-welding pull correction, body filler smoothing, priming, and full color-matched panel refinishing."
         },
         "none": {
-            "Low": "No repairs necessary. Maintain standard vehicle detailing schedules.",
-            "Moderate": "No repairs necessary. Maintain standard vehicle detailing schedules.",
-            "High": "No repairs necessary. Maintain standard vehicle detailing schedules.",
             "None": "No repairs necessary. Maintain standard vehicle detailing schedules."
         },
-        "00-damage": {
+        "damage": {
             "Low": "Apply clear coat rubbing compound, minor dent pulling tabs, and local paint touch-up to seal the affected area.",
             "Moderate": "Requires standard metal massaging (PDR) or localized body filler smoothing, followed by priming and paint blending.",
             "High": "Requires professional panel replacement or stud-welding pull correction, body filler, priming, respray, and high-temp curing."
-        },
-        "01-whole": {
-            "Low": "No repairs necessary. Maintain standard vehicle detailing schedules.",
-            "Moderate": "No repairs necessary. Maintain standard vehicle detailing schedules.",
-            "High": "No repairs necessary. Maintain standard vehicle detailing schedules.",
-            "None": "No repairs necessary. Maintain standard vehicle detailing schedules."
         }
     }
+    
+    if severity == "None" or resolved == "none":
+        return recommendations["none"]["None"]
+        
     sev_key = severity if severity in ["Low", "Moderate", "High"] else "Low"
-    if severity == "None" or damage_type in ["none", "01-whole"]:
-        return recommendations.get(damage_type, recommendations["none"])["None"]
-    return recommendations.get(damage_type, {}).get(sev_key, "No repair details available.")
+    return recommendations.get(resolved, {}).get(sev_key, "No repair details available.")
 
 def get_repair_time(damage_type: str, severity: str) -> str:
     """
     Provides estimated labor duration.
     """
+    resolved = resolve_type(damage_type)
+    
     times = {
         "scratch": {"Low": "1 - 2 Hours", "Moderate": "3 - 5 Hours", "High": "1 - 2 Days"},
         "dent": {"Low": "1 - 3 Hours", "Moderate": "4 - 8 Hours", "High": "2 - 4 Days"},
-        "none": {"Low": "0 Hours", "Moderate": "0 Hours", "High": "0 Hours", "None": "0 Hours"},
-        "00-damage": {"Low": "1 - 3 Hours", "Moderate": "4 - 8 Hours", "High": "2 - 4 Days"},
-        "01-whole": {"Low": "0 Hours", "Moderate": "0 Hours", "High": "0 Hours", "None": "0 Hours"}
+        "none": {"None": "0 Hours"},
+        "damage": {"Low": "1 - 3 Hours", "Moderate": "4 - 8 Hours", "High": "2 - 4 Days"}
     }
+    
+    if severity == "None" or resolved == "none":
+        return times["none"]["None"]
+        
     sev_key = severity if severity in ["Low", "Moderate", "High"] else "Low"
-    if severity == "None" or damage_type in ["none", "01-whole"]:
-        return times.get(damage_type, times["none"])["None"]
-    return times.get(damage_type, {}).get(sev_key, "Labor estimate unavailable.")
+    return times.get(resolved, {}).get(sev_key, "Labor estimate unavailable.")
 
 def get_safety_advice(damage_type: str, severity: str) -> str:
     """
     Offers safety guidelines regarding panel structural integrity.
     """
-    if damage_type in ["none", "01-whole"] or severity == "None":
+    resolved = resolve_type(damage_type)
+    
+    if resolved == "none" or severity == "None":
         return "No safety flags raised. The panel alignment is healthy and the vehicle remains fully roadworthy."
     
-    if damage_type in ["dent", "00-damage"] and severity == "High":
+    if resolved in ["dent", "damage"] and severity == "High":
         return "Caution: High-severity denting on panels or bumpers may compromise structural safety rings or hide internal crash-bar degradation. Please have a technician inspect underlying components and verify that nearby ADAS radar sensors are calibrated before driving."
     
-    if damage_type == "scratch" and severity == "High":
+    if resolved == "scratch" and severity == "High":
         return "Warning: Deep paint scrapes exposing bare sheet metal are highly vulnerable to rust oxidation if exposed to rain or salt. We recommend applying a temporary protective wax film or primer seal until permanent refinishing can be scheduled."
         
     return "The identified damage is cosmetic in nature. Standard vehicle operations and structural safety remain unaffected."
@@ -152,7 +156,9 @@ def get_insurance_summary(damage_type: str, severity: str) -> str:
     """
     Advises whether the cost makes filing an insurance claim worthwhile.
     """
-    if damage_type in ["none", "01-whole"] or severity == "None":
+    resolved = resolve_type(damage_type)
+    
+    if resolved == "none" or severity == "None":
         return "Not applicable. No insurance claims are necessary."
         
     if severity == "Low":
