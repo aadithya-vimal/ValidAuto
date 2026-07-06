@@ -60,7 +60,7 @@ class Sequential:
     """
     def __init__(self, layers=None):
         self.layers = layers or []
-        self.classes = ['scratch', 'dent', 'none']
+        self.classes = ['00-damage', '01-whole']
         self.weights = None
         self.bias = None
 
