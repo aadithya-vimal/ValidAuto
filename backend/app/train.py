@@ -2,15 +2,8 @@ import os
 import shutil
 import numpy as np
 from PIL import Image, ImageDraw, ImageEnhance
-
-# Try importing standard tensorflow, fallback to local raw numpy emulator if not available (e.g., Python 3.14)
-try:
-    import tensorflow as tf
-except ImportError:
-    try:
-        import tf_mock as tf
-    except ImportError:
-        from app import tf_mock as tf
+import tensorflow as tf
+from tensorflow.keras import layers, models, callbacks
 
 # Model Configurations
 IMAGE_SIZE = (224, 224)
@@ -27,105 +20,6 @@ def discover_classes(dataset_dir):
     if os.path.exists(train_dir):
         return sorted([d for d in os.listdir(train_dir) if os.path.isdir(os.path.join(train_dir, d))])
     raise FileNotFoundError(f"Could not discover classes: training directory '{train_dir}' does not exist.")
-
-def augment_image(img_pil):
-    """
-    Applies data augmentation parameters (flips, rotations, brightness shifts)
-    using PIL to help generalize the neural network parameters.
-    """
-    # 1. Random horizontal flip (50% chance)
-    if np.random.rand() > 0.5:
-        img_pil = img_pil.transpose(Image.FLIP_LEFT_RIGHT)
-        
-    # 2. Random rotation (-12 to +12 degrees)
-    angle = np.random.uniform(-12, 12)
-    img_pil = img_pil.rotate(angle, resample=Image.BICUBIC, expand=False, fillcolor=(140, 150, 160))
-    
-    # 3. Random brightness adjustment (90% to 110%)
-    enhancer = ImageEnhance.Brightness(img_pil)
-    brightness_factor = np.random.uniform(0.9, 1.1)
-    img_pil = enhancer.enhance(brightness_factor)
-    
-    return img_pil
-
-# Synthetic image generator has been completely removed to comply with Kaggle-only requirement
-
-def load_and_preprocess_data(base_dir, split, classes):
-    """
-    Loads images from folder splits, resizes them, and normalizes pixel values.
-    """
-    x_data = []
-    y_data = []
-    
-    for label_idx, cls in enumerate(classes):
-        folder_path = os.path.join(base_dir, split, cls)
-        if not os.path.exists(folder_path):
-            print(f"[Warning] Class folder not found: {folder_path}")
-            continue
-        for filename in os.listdir(folder_path):
-            file_path = os.path.join(folder_path, filename)
-            if not os.path.isfile(file_path):
-                continue
-            
-            try:
-                # Load and Resize to (224, 224)
-                img = tf.load_img(file_path, target_size=IMAGE_SIZE)
-                img_arr = tf.img_to_array(img)
-                
-                # Preprocess / Normalize pixel entries to [0.0, 1.0] range
-                img_arr = img_arr / 255.0
-                
-                x_data.append(img_arr)
-                y_data.append(label_idx)
-            except Exception as e:
-                print(f"[Warning] Failed to load image {file_path}: {e}")
-                continue
-            
-    return np.array(x_data, dtype=np.float32), np.array(y_data, dtype=np.float32)
-
-def calculate_metrics(y_true, y_pred_probs, classes):
-    """
-    Computes classification evaluation metrics: Accuracy, Precision, Recall, F1-Score,
-    and a standard Confusion Matrix.
-    """
-    y_pred = np.argmax(y_pred_probs, axis=1)
-    num_classes = len(classes)
-    
-    # 1. Confusion Matrix
-    cm = np.zeros((num_classes, num_classes), dtype=int)
-    for t, p in zip(y_true.astype(int), y_pred.astype(int)):
-        cm[t, p] += 1
-        
-    # 2. Precision, Recall, F1 per class
-    precision_list = []
-    recall_list = []
-    f1_list = []
-    
-    for i in range(num_classes):
-        tp = cm[i, i]
-        fp = np.sum(cm[:, i]) - tp
-        fn = np.sum(cm[i, :]) - tp
-        
-        precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0
-        recall = tp / (tp + fn) if (tp + fn) > 0 else 0.0
-        f1 = 2 * precision * recall / (precision + recall) if (precision + recall) > 0 else 0.0
-        
-        precision_list.append(precision)
-        recall_list.append(recall)
-        f1_list.append(f1)
-        
-    accuracy = np.mean(y_true == y_pred)
-    avg_precision = np.mean(precision_list)
-    avg_recall = np.mean(recall_list)
-    avg_f1 = np.mean(f1_list)
-    
-    return {
-        "accuracy": accuracy,
-        "precision": avg_precision,
-        "recall": avg_recall,
-        "f1_score": avg_f1,
-        "confusion_matrix": cm
-    }
 
 def draw_accuracy_graph(train_accs, val_accs, filepath):
     """
@@ -246,92 +140,180 @@ def draw_confusion_matrix(cm, filepath, classes):
 
 def train_vehicle_damage_classifier():
     """
-    Main training execution function. Builds, pre-processes, fits, evaluates,
-    and saves metric graphics to public directory.
+    Main training execution function using Keras/TensorFlow.
     """
-    # Use the downloaded Kaggle dataset directly
     dataset_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "data1a"))
     
     if not os.path.exists(dataset_dir):
-        raise FileNotFoundError(f"Kaggle dataset directory not found at '{dataset_dir}'. Please ensure it is downloaded.")
+        raise FileNotFoundError(f"Kaggle dataset directory not found at '{dataset_dir}'.")
         
     try:
-        # Discover classes dynamically from dataset folder
+        # Discover classes dynamically
         classes = discover_classes(dataset_dir)
         print(f"Discovered dataset classes dynamically: {classes}")
 
-        # 1. Preprocess data
-        print("Loading and preprocessing datasets from Kaggle dataset...")
-        x_train, y_train = load_and_preprocess_data(dataset_dir, 'training', classes)
+        # Construct tf.data pipelines
+        train_dir = os.path.join(dataset_dir, 'training')
+        val_dir = os.path.join(dataset_dir, 'validation')
         
-        # Load validation folder and split it 50/50 for val and test
-        x_val_all, y_val_all = load_and_preprocess_data(dataset_dir, 'validation', classes)
-        
-        np.random.seed(42)
-        indices = np.arange(len(x_val_all))
-        np.random.shuffle(indices)
-        
-        split_idx = len(indices) // 2
-        val_indices = indices[:split_idx]
-        test_indices = indices[split_idx:]
-        
-        x_val, y_val = x_val_all[val_indices], y_val_all[val_indices]
-        x_test, y_test = x_val_all[test_indices], y_val_all[test_indices]
-        
-        print(f"Train features: {x_train.shape}, Labels: {y_train.shape}")
-        print(f"Val features: {x_val.shape}, Labels: {y_val.shape}")
-        print(f"Test features: {x_test.shape}, Labels: {y_test.shape}")
-        
-        # 2. Model construction
-        base_model = tf.MobileNetV2(input_shape=(224, 224, 3), include_top=False, weights='imagenet')
-        
-        model = tf.Sequential([
-            base_model,
-            tf.GlobalAveragePooling2D(),
-            tf.Dropout(0.2),
-            tf.Dense(128, activation='relu'),
-            tf.Dense(len(classes), activation='softmax')
-        ])
-        model.classes = classes
-        
-        model.compile(optimizer='adam', loss='categorical_crossentropy', metrics=['accuracy'])
-        
-        # 3. Fit model and record training history
-        history = model.fit(
-            x_train, 
-            y_train, 
-            validation_data=(x_val, y_val),
-            epochs=5,
-            batch_size=16
+        print("Loading training dataset...")
+        train_ds = tf.keras.utils.image_dataset_from_directory(
+            train_dir,
+            image_size=IMAGE_SIZE,
+            batch_size=32,
+            label_mode='int',
+            shuffle=True,
+            seed=42
         )
         
-        # 4. Evaluate model and compute test split metrics
+        print("Loading validation/test dataset...")
+        val_all_ds = tf.keras.utils.image_dataset_from_directory(
+            val_dir,
+            image_size=IMAGE_SIZE,
+            batch_size=32,
+            label_mode='int',
+            shuffle=True,
+            seed=42
+        )
+        
+        # Split val_all_ds 50/50 into validation and test sets
+        total_batches = val_all_ds.cardinality().numpy()
+        val_batches = total_batches // 2
+        
+        val_ds = val_all_ds.take(val_batches)
+        test_ds = val_all_ds.skip(val_batches)
+        
+        print(f"Number of training batches: {train_ds.cardinality().numpy()}")
+        print(f"Number of validation batches: {val_ds.cardinality().numpy()}")
+        print(f"Number of test batches: {test_ds.cardinality().numpy()}")
+        
+        # Enable caching and prefetching for performance
+        AUTOTUNE = tf.data.AUTOTUNE
+        train_ds = train_ds.cache().prefetch(buffer_size=AUTOTUNE)
+        val_ds = val_ds.cache().prefetch(buffer_size=AUTOTUNE)
+        test_ds = test_ds.cache().prefetch(buffer_size=AUTOTUNE)
+
+        # 2. Model construction
+        print("Constructing MobileNetV2 transfer learning model...")
+        
+        # Data Augmentation Layers
+        data_augmentation = tf.keras.Sequential([
+            layers.RandomFlip("horizontal"),
+            layers.RandomRotation(0.1),
+            layers.RandomContrast(0.1),
+        ])
+        
+        # Pre-trained base model
+        base_model = tf.keras.applications.MobileNetV2(
+            input_shape=(224, 224, 3),
+            include_top=False,
+            weights='imagenet'
+        )
+        base_model.trainable = False  # Freeze pre-trained weights
+        
+        # Assemble model
+        inputs = tf.keras.Input(shape=(224, 224, 3))
+        x = data_augmentation(inputs)
+        x = layers.Rescaling(1./127.5, offset=-1)(x)  # Normalize inputs to [-1, 1] for MobileNetV2
+        x = base_model(x, training=False)
+        x = layers.GlobalAveragePooling2D()(x)
+        x = layers.Dropout(0.3)(x)
+        outputs = layers.Dense(len(classes), activation='softmax')(x)
+        
+        model = tf.keras.Model(inputs, outputs)
+        
+        # Compile
+        model.compile(
+            optimizer=tf.keras.optimizers.Adam(learning_rate=0.001),
+            loss=tf.keras.losses.SparseCategoricalCrossentropy(),
+            metrics=['accuracy']
+        )
+        
+        # Set up callbacks
+        checkpoint_callback = callbacks.ModelCheckpoint(
+            filepath=MODEL_PATH,
+            save_best_only=True,
+            monitor='val_accuracy',
+            mode='max',
+            verbose=1
+        )
+        early_stopping_callback = callbacks.EarlyStopping(
+            monitor='val_accuracy',
+            patience=5,
+            restore_best_weights=True,
+            verbose=1
+        )
+        reduce_lr_callback = callbacks.ReduceLROnPlateau(
+            monitor='val_loss',
+            factor=0.2,
+            patience=3,
+            min_lr=1e-6,
+            verbose=1
+        )
+        
+        # 3. Fit model
+        print("Starting training...")
+        history = model.fit(
+            train_ds,
+            validation_data=val_ds,
+            epochs=15,
+            callbacks=[checkpoint_callback, early_stopping_callback, reduce_lr_callback]
+        )
+        
+        # Save model explicitly to guarantee Keras format
+        model.save(MODEL_PATH)
+        print(f"Model saved successfully to {MODEL_PATH}")
+        
+        # 4. Evaluate on Test set
         print("Evaluating model metrics on test set...")
-        test_predictions = model.predict(x_test)
-        metrics = calculate_metrics(y_test, test_predictions, classes)
+        y_true = []
+        y_pred = []
+        for x_batch, y_batch in test_ds:
+            preds = model.predict(x_batch, verbose=0)
+            y_true.extend(y_batch.numpy())
+            y_pred.extend(np.argmax(preds, axis=1))
+            
+        y_true = np.array(y_true)
+        y_pred = np.array(y_pred)
+        
+        # Calculate confusion matrix
+        cm = tf.math.confusion_matrix(y_true, y_pred).numpy()
+        
+        # Calculate metrics
+        tp = cm[0, 0] if cm.shape[0] > 0 and cm.shape[1] > 0 else 0
+        fp = cm[1, 0] if cm.shape[0] > 1 and cm.shape[1] > 0 else 0
+        fn = cm[0, 1] if cm.shape[0] > 0 and cm.shape[1] > 1 else 0
+        tn = cm[1, 1] if cm.shape[0] > 1 and cm.shape[1] > 1 else 0
+        
+        precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0
+        recall = tp / (tp + fn) if (tp + fn) > 0 else 0.0
+        f1 = 2 * precision * recall / (precision + recall) if (precision + recall) > 0 else 0.0
+        accuracy = (tp + tn) / (tp + tn + fp + fn) if (tp + tn + fp + fn) > 0 else 0.0
+        
+        # Get final history accuracies
+        final_train_acc = history.history["accuracy"][-1]
+        final_val_acc = history.history["val_accuracy"][-1]
         
         print("\n================ EVALUATION METRICS ==================")
-        print(f"Accuracy:  {metrics['accuracy'] * 100:.2f}%")
-        print(f"Precision: {metrics['precision'] * 100:.2f}%")
-        print(f"Recall:    {metrics['recall'] * 100:.2f}%")
-        print(f"F1-Score:  {metrics['f1_score'] * 100:.2f}%")
+        print(f"Final Training Accuracy:   {final_train_acc * 100:.2f}%")
+        print(f"Final Validation Accuracy: {final_val_acc * 100:.2f}%")
+        print(f"Test Accuracy:             {accuracy * 100:.2f}%")
+        print(f"Precision:                 {precision * 100:.2f}%")
+        print(f"Recall:                    {recall * 100:.2f}%")
+        print(f"F1-Score:                  {f1 * 100:.2f}%")
         print("Confusion Matrix:")
-        print(metrics['confusion_matrix'])
+        print(cm)
         print("======================================================")
         
-        # 5. Save model weights
-        model.save(MODEL_PATH)
-        print(f"Successfully trained and saved model weights to '{MODEL_PATH}'")
-        
-        # 6. Generate and save metric curves to frontend public folder
+        # 5. Generate and save metric curves to frontend public folder
         if os.path.exists(FRONTEND_PUBLIC_DIR):
             graph_path = os.path.join(FRONTEND_PUBLIC_DIR, 'accuracy_graph.png')
             cm_path = os.path.join(FRONTEND_PUBLIC_DIR, 'confusion_matrix.png')
             
             draw_accuracy_graph(history.history["accuracy"], history.history["val_accuracy"], graph_path)
-            draw_confusion_matrix(metrics["confusion_matrix"], cm_path, classes)
+            draw_confusion_matrix(cm, cm_path, classes)
         else:
-            print(f"[Warning] Frontend public directory not found at '{FRONTEND_PUBLIC_DIR}'. Skipping metric curves generation.")
+            print(f"[Warning] Frontend public directory not found. Skipping curves.")
             
     except Exception as e:
         print(f"[Error] Training failed: {e}")
