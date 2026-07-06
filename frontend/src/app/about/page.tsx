@@ -6,13 +6,13 @@ export default function AboutPage() {
   const techStack = [
     {
       category: "Frontend",
-      tech: "Next.js 15 (App Router)",
+      tech: "Next.js 14 (App Router)",
       desc: "Fast, SEO-friendly React framework providing static/dynamic server-side rendering and client routing.",
     },
     {
       category: "Styling",
-      tech: "Tailwind CSS v4",
-      desc: "The next generation of Tailwind CSS with a native CSS-first configuration and lightning-fast compiler.",
+      tech: "Tailwind CSS",
+      desc: "Modern CSS utility framework enabling fully responsive, grid layouts with micro-animations and beautiful dark modes.",
     },
     {
       category: "Language",
@@ -54,7 +54,7 @@ export default function AboutPage() {
       {/* Page Header */}
       <div className="border-b border-white/5 pb-6">
         <h1 className="text-3xl font-extrabold tracking-tight text-white sm:text-4xl">
-          About AutoShield AI
+          About ValidAuto
         </h1>
         <p className="mt-2 text-sm text-slate-400">
           Learn about our mission, technological blueprints, and model performance metrics.
@@ -72,15 +72,15 @@ export default function AboutPage() {
           </span>
           <h2 className="text-2xl font-bold text-white">Accelerating claims through modern computer vision</h2>
           <p className="text-slate-300 leading-relaxed">
-            AutoShield AI was founded as a conceptual exploration into automating vehicle damage inspections. 
+            ValidAuto was founded as a conceptual exploration into automating vehicle damage inspections. 
             By merging high-performance API structures with real-time browser visualizers, we aim to minimize 
-            the friction between fender benders and insurance checks. In Phase 2 and 3, we successfully trained 
-            a transfer-learning model on MobileNetV2 features and built a structured local report generator.
+            the friction between fender benders and insurance checks. We successfully trained 
+            a transfer-learning model on MobileNetV2 features and built a structured inspection report generator.
           </p>
         </div>
       </div>
 
-      {/* Model Performance Graphics Section (Phase 4) */}
+      {/* Model Performance Graphics Section */}
       <div className="space-y-6">
         <h3 className="text-xl font-bold text-white flex items-center gap-2">
           <LineChart className="h-5 w-5 text-brand-cyan" />
@@ -169,7 +169,7 @@ export default function AboutPage() {
         <span className="flex items-center gap-1.5">
           Made with <Heart className="h-3.5 w-3.5 text-brand-rose fill-brand-rose/20" /> for the Samsung Coding project.
         </span>
-        <span className="mt-2 sm:mt-0">Version 1.0.0 (Phase 1 Baseline)</span>
+        <span className="mt-2 sm:mt-0">Version 3.0.0 (Phase 3 Release)</span>
       </div>
     </div>
   );

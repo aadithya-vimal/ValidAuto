@@ -79,7 +79,7 @@ export default function ReportCard({
             </div>
             <div>
               <h3 className="text-lg font-bold text-white">Assessment Summary</h3>
-              <p className="text-xs text-slate-400">AutoShield AI Professional Inspection Summary</p>
+              <p className="text-xs text-slate-400">ValidAuto Professional Inspection Summary</p>
             </div>
           </div>
           <button

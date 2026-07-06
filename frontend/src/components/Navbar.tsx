@@ -12,6 +12,7 @@ export default function Navbar() {
   const navigation = [
     { name: "Home", href: "/" },
     { name: "Analysis", href: "/analysis" },
+    { name: "History", href: "/history" },
     { name: "About", href: "/about" },
   ];
 
@@ -29,7 +30,7 @@ export default function Navbar() {
                 <div className="absolute -inset-0.5 -z-10 rounded-xl bg-gradient-to-tr from-brand-indigo to-brand-cyan opacity-40 blur-sm group-hover:opacity-75 transition-opacity" />
               </div>
               <span className="bg-gradient-to-r from-white via-slate-100 to-slate-400 bg-clip-text text-lg font-bold tracking-tight text-transparent">
-                AutoShield<span className="text-brand-cyan font-semibold">AI</span>
+                Valid<span className="text-brand-cyan font-semibold">Auto</span>
               </span>
             </Link>
           </div>

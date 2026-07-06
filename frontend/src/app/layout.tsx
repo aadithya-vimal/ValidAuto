@@ -14,7 +14,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "AutoShield AI - Intelligent Vehicle Damage Assessment",
+  title: "ValidAuto - Intelligent Vehicle Damage Assessment",
   description: "Get instant vehicle damage scanning and repair cost estimates powered by computer vision.",
 };
 
@@ -36,8 +36,8 @@ export default function RootLayout({
         {/* Footer */}
         <footer className="border-t border-white/5 bg-slate-950/40 py-8 text-center text-xs text-slate-500">
           <div className="mx-auto max-w-7xl px-4">
-            <p>© {new Date().getFullYear()} AutoShield AI Inc. All rights reserved.</p>
-            <p className="mt-1 text-slate-600">Built with Next.js, FastAPI, & Tailwind CSS</p>
+            <p>© {new Date().getFullYear()} ValidAuto Systems. All rights reserved.</p>
+            <p className="mt-1 text-slate-600 font-mono text-[10px]">ISO 9001:2015 Evaluator Node • Academic Research Presentation</p>
           </div>
         </footer>
       </body>

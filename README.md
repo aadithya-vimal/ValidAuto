@@ -1,18 +1,18 @@
-# AutoShield AI: Automated Vehicle Damage Assessment (Phase 5 Submission)
+# ValidAuto: AI-Powered Vehicle Damage Assessment Platform
 
-AutoShield AI is an end-to-end full-stack prototype designed to demonstrate computer vision damage classification and automated inspection report generation for vehicles. 
+ValidAuto is an end-to-end full-stack system designed to demonstrate computer vision damage classification and automated inspection report generation for vehicles. 
 
-Built with **Next.js (App Router, Tailwind CSS v4)** on the frontend and **FastAPI (Python)** on the backend, the system allows users to upload exterior damage photos, classify damage types (Scratch, Dent, None), estimate severity tiers using model confidence thresholds, and generate insurance-ready PDF reports.
+Built with **Next.js (App Router, Tailwind CSS)** on the frontend and **FastAPI (Python)** on the backend, the system allows users to upload exterior damage photos, classify damage types dynamically, estimate severity tiers using model confidence thresholds, and generate professional vehicle inspection PDF reports in Indian Rupees (₹).
 
 ---
 
 ## 🛠️ System Architecture
 
 The application is structured as a decoupled full-stack project:
-1. **Frontend (Next.js + TypeScript)**: Renders a premium, dark-themed dashboard using glassmorphic panels and native print-screen interfaces. Includes a high-fidelity image scanner overlay and live classification HUD.
+1. **Frontend (Next.js + TypeScript)**: Renders a premium, dark-themed dashboard using glassmorphic panels and native print-screen interfaces. Includes a high-fidelity image scanner, automatic inspection reports, and browser-stored inspection logs.
 2. **Backend (FastAPI)**: Serves prediction endpoints and local report compilers.
-3. **ML Classifier Engine (TensorFlow/Keras)**: Uses transfer learning (MobileNetV2 base feature extractor) to classify panel damage.
-   * *Note on Compatibility*: For systems running Python 3.14 (where precompiled TensorFlow wheels are not yet available), a built-in emulated Keras layer executes model fits, data splits, and forward propagation using raw NumPy.
+3. **ML Classifier Engine (TensorFlow/Keras)**: Uses transfer learning (MobileNetV2 base feature extractor) running on Python 3.11 inside a dedicated virtual environment.
+
 
 ---
 
