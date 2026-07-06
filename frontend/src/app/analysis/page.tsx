@@ -94,13 +94,17 @@ export default function AnalysisPage() {
 
   // Maps live classifier outputs to the dashboard visuals
   const mapAPIResponseToAssessment = (data: LiveAPIResponse): AssessmentDetails => {
-    const isDamage = data.damage !== "none";
+    const isDamage = data.damage !== "none" && data.damage !== "01-whole";
     
     let minCost = 0;
     let maxCost = 0;
     let suggestedAction = "No repairs required. Exterior panels are in clean condition.";
 
-    if (data.damage === "scratch") {
+    if (data.damage === "00-damage" || data.damage === "damage") {
+      minCost = data.severity === "High" ? 850 : data.severity === "Moderate" ? 450 : 150;
+      maxCost = data.severity === "High" ? 1500 : data.severity === "Moderate" ? 750 : 300;
+      suggestedAction = "Vehicle exterior damage identified. Requires professional body shop alignment or panel repair.";
+    } else if (data.damage === "scratch") {
       minCost = data.severity === "High" ? 450 : data.severity === "Moderate" ? 250 : 120;
       maxCost = data.severity === "High" ? 700 : data.severity === "Moderate" ? 380 : 220;
       suggestedAction = "Scratched panel identified. Requires surface detailing, paint touch-up, or clear coat blending.";
@@ -115,7 +119,7 @@ export default function AnalysisPage() {
         part: `Body Panel (${data.damage})`,
         severity: data.severity,
         confidence: data.confidence,
-        description: `Classified as a ${data.damage} with ${data.severity} severity estimated using confidence thresholds.`
+        description: `Classified as ${data.damage} with ${data.severity} severity estimated using confidence thresholds.`
       }
     ] : [];
 
@@ -146,13 +150,34 @@ export default function AnalysisPage() {
     let safety = "";
     let insurance = "";
 
-    if (dmg === "none") {
+    if (dmg === "none" || dmg === "01-whole") {
       description = "No anomalies or body panel defects were detected by the computer vision scan.";
       cause = "No causes to report. Panel integrity is normal.";
       recommendation = "No repairs necessary. Maintain standard vehicle detailing schedules.";
       repairTime = "0 Hours";
       safety = "No safety flags raised. The panel alignment is healthy and the vehicle remains fully roadworthy.";
       insurance = "Not applicable. No insurance claims are necessary.";
+    } else if (dmg === "00-damage" || dmg === "damage") {
+      description = `The scanning engine identified vehicle body panel damage with ${(confidence * 100).toFixed(1)}% confidence (Estimated Severity: ${capSeverity}).`;
+      if (capSeverity === "High") {
+        cause = "Typically indicates moderate-to-high speed collision impact, striking structural barriers, or panel crash occurrences.";
+        recommendation = "Requires panel replacement or major alignment correction, body filler smoothing, priming, and full color-matched respray.";
+        repairTime = "2 - 4 Days";
+        safety = "Caution: High-severity panel deformation may compromise safety structures or hide internal crash-bar degradation. Check ADAS sensors.";
+        insurance = "Significant repair costs anticipated. It is recommended to contact your insurance representative to submit a claim.";
+      } else if (capSeverity === "Moderate") {
+        cause = "Commonly caused by shopping cart impact, low-speed parking bumps, or side-scraping guard rails.";
+        recommendation = "Requires localized panel repair, metal massaging or pulling, followed by sanding and paint refinishing.";
+        repairTime = "4 - 8 Hours";
+        safety = "The identified damage is cosmetic in nature. Standard vehicle operations and structural safety remain unaffected.";
+        insurance = "Repair costs will closely approximate deductibles. Obtain a shop estimate first to evaluate claim viability.";
+      } else {
+        cause = "Typically caused by minor road debris, low-impact bumps, or parking scratches.";
+        recommendation = "Apply clear coat rubbing compounds, minor body pulling, and localized paint touch-ups.";
+        repairTime = "1 - 3 Hours";
+        safety = "The identified damage is cosmetic in nature. Standard vehicle operations and structural safety remain unaffected.";
+        insurance = "Repair cost falls below standard deductibles. Out-of-pocket payment is recommended to protect insurance rates.";
+      }
     } else if (dmg === "scratch") {
       description = `The scanning engine identified a ${capSeverity.toLowerCase()}-severity paint scratch on the vehicle skin with ${(confidence * 100).toFixed(1)}% confidence.`;
       if (capSeverity === "High") {
@@ -243,7 +268,7 @@ export default function AnalysisPage() {
       await new Promise((resolve) => setTimeout(resolve, 1600));
 
       const mockData: LiveAPIResponse = {
-        damage: "scratch",
+        damage: "00-damage",
         confidence: 0.9324,
         severity: "High",
         filename: image.name,
