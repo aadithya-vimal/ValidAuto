@@ -13,6 +13,7 @@ export default function Navbar() {
     { name: "Home", href: "/" },
     { name: "Analysis", href: "/analysis" },
     { name: "History", href: "/history" },
+    { name: "Analytics", href: "/analytics" },
     { name: "About", href: "/about" },
   ];
 
