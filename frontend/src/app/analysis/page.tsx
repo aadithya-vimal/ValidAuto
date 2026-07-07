@@ -145,6 +145,39 @@ export default function AnalysisPage() {
     return () => clearInterval(interval);
   }, [isAnalyzing]);
 
+  useEffect(() => {
+    const currentAnalysis = localStorage.getItem("validauto_current_analysis");
+    if (currentAnalysis) {
+      try {
+        const data: LiveAPIResponse = JSON.parse(currentAnalysis);
+        setApiResponse(data);
+        if (data.report) {
+          const info = data.report.vehicle_info;
+          setOwnerName(info.owner_name || "");
+          setMake(info.make || "");
+          setModelName(info.model_name || "");
+          setVariant(info.variant || "");
+          setYear(String(info.year || ""));
+          setRegNumber(info.reg_number || "");
+          setVin(info.vin || "");
+          setOdometer(String(info.odometer || ""));
+          setInsuranceProvider(info.insurance_provider || "");
+          setPolicyNumber(info.policy_number || "");
+          
+          setImageBase64(data.images.original || "");
+        }
+        if (data.ocr) {
+          setOcrResults(data.ocr);
+        }
+        setCurrentStep(3);
+      } catch (e) {
+        console.error("Failed to restore current analysis:", e);
+      } finally {
+        localStorage.removeItem("validauto_current_analysis");
+      }
+    }
+  }, []);
+
   const isFormValid = () => {
     return (
       ownerName.trim() !== "" &&
@@ -455,7 +488,8 @@ export default function AnalysisPage() {
       severity: result.report.severity,
       healthScore: result.report.health_score,
       minCost: result.report.repair_costs.total,
-      maxCost: result.report.repair_costs.total
+      maxCost: result.report.repair_costs.total,
+      fullResult: result
     };
 
     historyList.unshift(newRecord);

@@ -261,7 +261,7 @@ export default function HomePage() {
           <Link href="/about" className="hover:text-white transition-colors">About AI Core</Link>
         </div>
         <p>&copy; {new Date().getFullYear()} ValidAuto Systems. All rights reserved.</p>
-        <p className="mt-1 text-[10px] text-slate-600">ISO 9001:2015 Evaluator Node • Developed for academic research presentations.</p>
+        <p className="mt-1 text-[10px] text-slate-600">ValidAuto Evaluator Node • Developed for academic research presentations.</p>
       </footer>
     </div>
   );

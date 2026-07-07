@@ -195,7 +195,7 @@ export default function CertificateView({
       {/* Footer */}
       <div className="text-center text-[9px] text-slate-500 border-t border-slate-200 pt-4">
         <p>This certificate represents a neural computer vision assessment and does not constitute a legal valuation.</p>
-        <p className="mt-0.5">ValidAuto Systems Inc. • ISO 9001:2015 Assessor Engine v5.0.0</p>
+        <p className="mt-0.5">ValidAuto Systems Inc. • Assessor Engine v5.0.0</p>
       </div>
     </div>
   );

@@ -2,11 +2,97 @@
 
 import { useState, useEffect } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { 
-  History as HistoryIcon, Calendar, Trash2, ArrowLeft, Cpu, 
-  ShieldAlert, IndianRupee, Sparkles, Search, SlidersHorizontal, ArrowUpDown,
-  Download, Eye, X, FileText, RefreshCw
+  History as HistoryIcon, Calendar, Trash2, Cpu, 
+  IndianRupee, Search, SlidersHorizontal, ArrowUpDown,
+  Download, Eye, RefreshCw
 } from "lucide-react";
+
+interface LiveAPIResponse {
+  quality: {
+    resolution: string;
+    brightness: number;
+    blur_score: number;
+    rating: "Excellent" | "Good" | "Fair" | "Poor" | "Rejected";
+    suitability: string;
+    reason: string;
+  };
+  ocr?: {
+    registration: { value: string | null; confidence: number; uncertain_indices: number[] };
+    vin: { value: string | null; confidence: number; uncertain_indices: number[] };
+    chassis: { value: string | null; confidence: number; uncertain_indices: number[] };
+  };
+  images: {
+    original: string;
+    enhanced: string;
+    heatmap: string;
+    localized: string;
+  };
+  primary_detection: {
+    label: "Damage" | "No Damage" | "Rejected";
+    confidence: number;
+  };
+  secondary_classification: {
+    label: string;
+    confidence: number;
+  };
+  report: {
+    vehicle_info: {
+      owner_name: string;
+      make: string;
+      model_name: string;
+      variant: string;
+      year: number;
+      reg_number: string;
+      vin: string;
+      odometer: number;
+      insurance_provider: string;
+      policy_number: string;
+    };
+    health_score: number;
+    health_explanation: string;
+    severity: string;
+    repair_costs: {
+      parts: number;
+      labour: number;
+      paint: number;
+      gst: number;
+      total: number;
+    };
+    repair_timeline: {
+      working_hours: number;
+      repair_days: number;
+      completion_date: string;
+    };
+    insurance: {
+      recommendation: string;
+      reason: string;
+      required_docs: string[];
+    };
+    safety: {
+      roadworthy: string;
+      night_driving_safe: string;
+      highway_safe: string;
+      rain_driving_safe: string;
+      long_distance_safe: string;
+      immediate_repair_required: string;
+      reason: string;
+    };
+    localization: {
+      coverage_pct: number;
+      num_regions: number;
+      largest_region_pct: number;
+      affected_area: string;
+    };
+    maintenance: string[];
+    description: string;
+    possible_cause: string;
+    explanation: string;
+    timestamp: string;
+    inference_time_seconds: number;
+  } | null;
+}
 
 interface HistoryItem {
   id: string;
@@ -22,18 +108,17 @@ interface HistoryItem {
   healthScore: number;
   minCost: number;
   maxCost: number;
+  fullResult?: LiveAPIResponse;
 }
 
 export default function HistoryPage() {
+  const router = useRouter();
   const [history, setHistory] = useState<HistoryItem[]>([]);
   const [search, setSearch] = useState("");
   const [sortBy, setSortBy] = useState<"date" | "health" | "cost">("date");
   const [filterSeverity, setFilterSeverity] = useState<string>("all");
   const [filterDamage, setFilterDamage] = useState<string>("all");
   
-  // Modal viewer state
-  const [activeItem, setActiveItem] = useState<HistoryItem | null>(null);
-
   // Undo Delete state
   const [deletedItem, setDeletedItem] = useState<HistoryItem | null>(null);
   const [showUndoBanner, setShowUndoBanner] = useState(false);
@@ -116,6 +201,95 @@ export default function HistoryPage() {
     }).format(val);
   };
 
+  const handleItemClick = (item: HistoryItem) => {
+    if (item.fullResult) {
+      localStorage.setItem("validauto_current_analysis", JSON.stringify(item.fullResult));
+    } else {
+      // Reconstruct simple LiveAPIResponse for legacy items without fullResult
+      const reconstructed: LiveAPIResponse = {
+        quality: {
+          resolution: "1280 x 720 px",
+          brightness: 110.45,
+          blur_score: 85.32,
+          rating: "Good",
+          suitability: "Suitable",
+          reason: "Legacy log reconstruction."
+        },
+        images: {
+          original: item.imageSrc,
+          enhanced: item.imageSrc,
+          heatmap: item.imageSrc,
+          localized: item.imageSrc
+        },
+        primary_detection: {
+          label: item.damage === "none" ? "No Damage" : "Damage",
+          confidence: item.confidence
+        },
+        secondary_classification: {
+          label: item.damage.toUpperCase(),
+          confidence: item.confidence
+        },
+        report: {
+          vehicle_info: {
+            owner_name: item.ownerName,
+            make: item.make || "N/A",
+            model_name: item.modelName || "N/A",
+            variant: "N/A",
+            year: 2020,
+            reg_number: item.filename,
+            vin: "N/A",
+            odometer: 50000,
+            insurance_provider: "N/A",
+            policy_number: "N/A"
+          },
+          health_score: item.healthScore,
+          health_explanation: "Legacy record restored from database logs.",
+          severity: item.severity,
+          repair_costs: {
+            parts: 0,
+            labour: Math.floor(item.minCost * 0.4),
+            paint: Math.floor(item.minCost * 0.6),
+            gst: Math.floor(item.minCost * 0.18),
+            total: item.minCost
+          },
+          repair_timeline: {
+            working_hours: 6,
+            repair_days: 2,
+            completion_date: new Date(item.timestamp).toISOString().split("T")[0]
+          },
+          insurance: {
+            recommendation: item.severity === "Severe" ? "Immediate Inspection Required" : "Self Repair Recommended",
+            reason: "Legacy claim status.",
+            required_docs: []
+          },
+          safety: {
+            roadworthy: item.severity === "Severe" ? "Unsafe" : "Safe",
+            night_driving_safe: item.severity === "Severe" ? "Unsafe" : "Safe",
+            highway_safe: item.severity === "Severe" ? "Unsafe" : "Safe",
+            rain_driving_safe: item.severity === "Severe" ? "Unsafe" : "Safe",
+            long_distance_safe: item.severity === "Severe" ? "Unsafe" : "Safe",
+            immediate_repair_required: item.severity === "Severe" ? "Yes" : "No",
+            reason: "Legacy safety record."
+          },
+          localization: {
+            coverage_pct: 2.5,
+            num_regions: 1,
+            largest_region_pct: 2.5,
+            affected_area: "Panel"
+          },
+          maintenance: [],
+          description: "Legacy defect log details.",
+          possible_cause: "Unknown.",
+          explanation: "Reconstructed from audit trail.",
+          timestamp: item.timestamp,
+          inference_time_seconds: 0.05
+        }
+      };
+      localStorage.setItem("validauto_current_analysis", JSON.stringify(reconstructed));
+    }
+    router.push("/analysis");
+  };
+
   const filteredItems = history
     .filter(item => {
       const matchSearch = 
@@ -168,105 +342,106 @@ export default function HistoryPage() {
               </button>
               <button
                 onClick={handleClearHistory}
-                className="inline-flex items-center gap-2 rounded-xl border border-brand-rose/20 bg-brand-rose/5 px-4 py-2.5 text-xs font-bold text-brand-rose hover:bg-brand-rose/10 transition-all cursor-pointer"
+                className="inline-flex items-center gap-1.5 rounded-xl border border-brand-rose/20 bg-brand-rose/5 px-4 py-2.5 text-xs font-bold text-brand-rose hover:bg-brand-rose/10 cursor-pointer"
               >
                 <Trash2 className="h-4 w-4" />
-                Clear Logs
+                Clear All
               </button>
             </>
           )}
         </div>
       </div>
 
-      {/* Undo Restore Toast Banner */}
-      {showUndoBanner && deletedItem && (
-        <div className="flex items-center justify-between p-4 bg-brand-emerald/10 border border-brand-emerald/20 text-brand-emerald text-xs font-bold rounded-xl animate-fade-in">
-          <span>Deleted inspection record for {deletedItem.filename}.</span>
+      {/* Undo Banner */}
+      {showUndoBanner && (
+        <div className="bg-brand-indigo/90 border border-brand-indigo/50 text-white px-4 py-3.5 rounded-xl shadow-lg flex items-center justify-between text-sm animate-slide-in">
+          <span className="font-medium">Inspection record deleted.</span>
           <button 
             onClick={handleRestore}
-            className="flex items-center gap-1 hover:underline cursor-pointer"
+            className="inline-flex items-center gap-1 bg-white/10 hover:bg-white/20 border border-white/20 px-3 py-1 rounded-md text-xs font-black transition-colors"
           >
-            <RefreshCw className="h-3.5 w-3.5" />
-            Undo & Restore
+            <RefreshCw className="h-3 w-3" />
+            UNDO
           </button>
         </div>
       )}
 
+      {/* Main content list */}
       {history.length === 0 ? (
-        <div className="glass-panel flex flex-col items-center justify-center rounded-2xl p-16 text-center text-slate-400 min-h-[350px]">
-          <Sparkles className="h-12 w-12 text-brand-indigo/50 mb-4 animate-pulse" />
-          <h3 className="text-lg font-bold text-white mb-2">No Inspection Records Found</h3>
-          <p className="text-sm text-slate-400 max-w-md mb-6">
-            You haven&rsquo;t scanned any vehicles yet. Run your first neural network scan to populate local history logs.
-          </p>
-          <Link
-            href="/analysis"
-            className="inline-flex items-center gap-2 rounded-xl bg-white/5 border border-white/10 px-5 py-3 text-sm font-bold text-white hover:bg-white/10 transition-all"
-          >
-            <ArrowLeft className="h-4 w-4" />
-            Go to Scanner
-          </Link>
+        <div className="glass-panel text-center py-20 rounded-2xl border-white/5 space-y-4">
+          <div className="inline-flex h-16 w-16 items-center justify-center rounded-2xl bg-brand-indigo/10 text-brand-indigo">
+            <HistoryIcon className="h-8 w-8" />
+          </div>
+          <div>
+            <h3 className="text-lg font-bold text-white">No history records found</h3>
+            <p className="mt-1 text-sm text-slate-400">Scan a vehicle to generate your first audit record.</p>
+          </div>
+          <div className="pt-2">
+            <Link
+              href="/analysis"
+              className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-brand-indigo to-brand-cyan px-5 py-2.5 text-sm font-bold text-white shadow shadow-brand-indigo/20 hover:opacity-95"
+            >
+              Start First Scan
+            </Link>
+          </div>
         </div>
       ) : (
         <div className="space-y-6">
-          {/* Controls Bar (Search, Filter, Sort) */}
-          <div className="grid grid-cols-1 md:grid-cols-12 gap-4 items-center bg-slate-900/40 p-4 border border-white/5 rounded-2xl">
-            {/* Search */}
-            <div className="md:col-span-4 relative flex items-center">
-              <Search className="absolute left-3.5 h-4 w-4 text-slate-500" />
-              <input 
-                type="text" 
-                value={search} 
+          {/* Controls Bar */}
+          <div className="glass-panel p-4 rounded-xl border border-white/5 bg-slate-900/40 flex flex-col md:flex-row md:items-center justify-between gap-4">
+            {/* Search Input */}
+            <div className="relative flex-1 max-w-md">
+              <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-500" />
+              <input
+                type="text"
+                placeholder="Search by registration number or owner..."
+                value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                placeholder="Search by Owner or Reg No..."
-                className="w-full bg-slate-950 border border-white/10 rounded-xl pl-10 pr-4 py-2 text-xs text-white focus:outline-none focus:border-brand-cyan"
+                className="w-full bg-slate-950/80 border border-white/10 rounded-xl pl-10 pr-4 py-2.5 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-brand-cyan"
               />
             </div>
 
-            {/* Filter Severity */}
-            <div className="md:col-span-2.5 flex items-center gap-2 text-xs">
-              <SlidersHorizontal className="h-4 w-4 text-slate-500 shrink-0" />
-              <select 
-                value={filterSeverity} 
-                onChange={(e) => setFilterSeverity(e.target.value)}
-                className="w-full bg-slate-950 border border-white/10 rounded-xl px-3 py-2 text-xs text-slate-300 focus:outline-none focus:border-brand-cyan"
-              >
-                <option value="all">All Severities</option>
-                <option value="minor">Minor</option>
-                <option value="moderate">Moderate</option>
-                <option value="severe">Severe</option>
-              </select>
-            </div>
+            {/* Filters / Sorting */}
+            <div className="flex flex-wrap items-center gap-3.5 text-xs">
+              <div className="flex items-center gap-2">
+                <SlidersHorizontal className="h-4 w-4 text-slate-400 shrink-0" />
+                <select
+                  value={filterSeverity}
+                  onChange={(e) => setFilterSeverity(e.target.value)}
+                  className="bg-slate-950 border border-white/10 rounded-xl px-3 py-2 text-slate-300 focus:outline-none focus:border-brand-cyan"
+                >
+                  <option value="all">All Severities</option>
+                  <option value="minor">Minor</option>
+                  <option value="moderate">Moderate</option>
+                  <option value="severe">Severe</option>
+                </select>
 
-            {/* Filter Damage Type */}
-            <div className="md:col-span-2.5 flex items-center gap-2 text-xs">
-              <ShieldAlert className="h-4 w-4 text-slate-500 shrink-0" />
-              <select 
-                value={filterDamage} 
-                onChange={(e) => setFilterDamage(e.target.value)}
-                className="w-full bg-slate-950 border border-white/10 rounded-xl px-3 py-2 text-xs text-slate-300 focus:outline-none focus:border-brand-cyan"
-              >
-                <option value="all">All Defects</option>
-                <option value="none">No Damage</option>
-                <option value="scratch">Scratch</option>
-                <option value="dent">Dent</option>
-                <option value="bumper">Bumper</option>
-                <option value="glass">Glass</option>
-              </select>
-            </div>
+                <select
+                  value={filterDamage}
+                  onChange={(e) => setFilterDamage(e.target.value)}
+                  className="bg-slate-950 border border-white/10 rounded-xl px-3 py-2 text-slate-300 focus:outline-none focus:border-brand-cyan"
+                >
+                  <option value="all">All Defects</option>
+                  <option value="none">No Damage</option>
+                  <option value="scratch">Scratch</option>
+                  <option value="dent">Dent</option>
+                  <option value="bumper">Bumper</option>
+                  <option value="glass">Glass</option>
+                </select>
+              </div>
 
-            {/* Sort */}
-            <div className="md:col-span-3 flex items-center gap-2 text-xs">
-              <ArrowUpDown className="h-4 w-4 text-slate-500 shrink-0" />
-              <select 
-                value={sortBy} 
-                onChange={(e) => setSortBy(e.target.value as any)}
-                className="w-full bg-slate-950 border border-white/10 rounded-xl px-3 py-2 text-xs text-slate-300 focus:outline-none focus:border-brand-cyan"
-              >
-                <option value="date">Sort by Scan Date</option>
-                <option value="health">Sort by Health Score</option>
-                <option value="cost">Sort by Quote Cost</option>
-              </select>
+              <div className="flex items-center gap-2 border-l border-white/5 pl-3">
+                <ArrowUpDown className="h-4 w-4 text-slate-400 shrink-0" />
+                <select
+                  value={sortBy}
+                  onChange={(e) => setSortBy(e.target.value as any)}
+                  className="bg-slate-950 border border-white/10 rounded-xl px-3 py-2 text-slate-300 focus:outline-none focus:border-brand-cyan"
+                >
+                  <option value="date">Sort by Date</option>
+                  <option value="health">Sort by Health</option>
+                  <option value="cost">Sort by Cost</option>
+                </select>
+              </div>
             </div>
           </div>
 
@@ -278,7 +453,7 @@ export default function HistoryPage() {
               return (
                 <div 
                   key={item.id} 
-                  onClick={() => setActiveItem(item)}
+                  onClick={() => handleItemClick(item)}
                   className="glass-panel glass-panel-hover overflow-hidden rounded-2xl border border-white/5 bg-slate-900/40 flex flex-col justify-between cursor-pointer"
                 >
                   {/* Image & Date badge */}
@@ -302,13 +477,21 @@ export default function HistoryPage() {
                         <span className="text-xs text-slate-400 font-bold uppercase truncate max-w-[130px]">
                           {item.filename}
                         </span>
-                        <span className={`inline-block px-2.5 py-0.5 rounded-full text-[9px] font-bold uppercase border ${
-                          item.severity === "Severe" ? "bg-brand-rose/10 text-brand-rose border-brand-rose/20" :
-                          item.severity === "Moderate" ? "bg-amber-500/10 text-amber-500 border-amber-500/20" :
-                          "bg-brand-emerald/10 text-brand-emerald border-brand-emerald/20"
-                        }`}>
-                          {item.severity}
-                        </span>
+                        <div className="flex items-center gap-2">
+                          <span className={`inline-block px-2.5 py-0.5 rounded-full text-[9px] font-bold uppercase border ${
+                            item.severity === "Severe" ? "bg-brand-rose/10 text-brand-rose border-brand-rose/20" :
+                            item.severity === "Moderate" ? "bg-amber-500/10 text-amber-500 border-amber-500/20" :
+                            "bg-brand-emerald/10 text-brand-emerald border-brand-emerald/20"
+                          }`}>
+                            {item.severity}
+                          </span>
+                          <button
+                            onClick={(e) => handleDelete(item.id, e)}
+                            className="p-1 rounded-md text-slate-500 hover:text-brand-rose hover:bg-white/5 transition-colors cursor-pointer"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
                       </div>
 
                       <h4 className="text-lg font-bold text-white capitalize">
@@ -343,74 +526,6 @@ export default function HistoryPage() {
                 </div>
               );
             })}
-          </div>
-        </div>
-      )}
-
-      {/* Modal Inspector Details Viewer */}
-      {activeItem && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 backdrop-blur-sm p-4 animate-fade-in">
-          <div className="glass-panel w-full max-w-2xl max-h-[85vh] overflow-y-auto rounded-2xl border-white/10 bg-slate-900 shadow-2xl p-6 relative space-y-6">
-            <button 
-              onClick={() => setActiveItem(null)}
-              className="absolute right-4 top-4 text-slate-400 hover:text-white p-1"
-            >
-              <X className="h-5 w-5" />
-            </button>
-
-            <div className="border-b border-white/5 pb-4">
-              <h3 className="text-lg font-bold text-white uppercase flex items-center gap-2">
-                <FileText className="h-5.5 w-5.5 text-brand-cyan" />
-                Inspection Audit details
-              </h3>
-              <span className="text-[10px] text-slate-500 font-mono">Record: {activeItem.id}</span>
-            </div>
-
-            <div className="grid grid-cols-2 gap-4 text-xs font-mono">
-              <div>
-                <span className="block text-[9px] text-slate-500 uppercase">Registration No</span>
-                <span className="font-bold text-white">{activeItem.filename}</span>
-              </div>
-              <div>
-                <span className="block text-[9px] text-slate-500 uppercase">Owner Name</span>
-                <span className="font-bold text-white">{activeItem.ownerName}</span>
-              </div>
-              <div>
-                <span className="block text-[9px] text-slate-500 uppercase">Damage Type</span>
-                <span className="font-bold text-white capitalize">{activeItem.damage}</span>
-              </div>
-              <div>
-                <span className="block text-[9px] text-slate-500 uppercase">Severity Level</span>
-                <span className="font-bold text-white">{activeItem.severity}</span>
-              </div>
-              <div>
-                <span className="block text-[9px] text-slate-500 uppercase">Health Index</span>
-                <span className="font-bold text-brand-indigo">{activeItem.healthScore}/100</span>
-              </div>
-              <div>
-                <span className="block text-[9px] text-slate-500 uppercase">Total Cost Quote</span>
-                <span className="font-bold text-brand-emerald">{formatCurrency(activeItem.minCost)}</span>
-              </div>
-            </div>
-
-            <div className="pt-4 border-t border-white/5 flex justify-end gap-2.5">
-              <button
-                onClick={(e) => {
-                  handleDelete(activeItem.id, e);
-                  setActiveItem(null);
-                }}
-                className="inline-flex items-center gap-1.5 rounded-xl border border-brand-rose/20 bg-brand-rose/5 px-4 py-2 text-xs font-bold text-brand-rose hover:bg-brand-rose/10 cursor-pointer"
-              >
-                <Trash2 className="h-4 w-4" />
-                Delete Record
-              </button>
-              <button
-                onClick={() => setActiveItem(null)}
-                className="inline-flex items-center gap-1.5 rounded-xl bg-white/5 border border-white/10 px-4 py-2 text-xs font-bold text-white hover:bg-white/10 cursor-pointer"
-              >
-                Close
-              </button>
-            </div>
           </div>
         </div>
       )}
