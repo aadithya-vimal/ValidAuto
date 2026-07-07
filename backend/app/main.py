@@ -4,6 +4,7 @@ import datetime
 import numpy as np
 import cv2
 import base64
+import json
 from PIL import Image, ImageOps
 from io import BytesIO
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException
@@ -25,6 +26,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+DB_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "db")
+os.makedirs(DB_DIR, exist_ok=True)
 
 # Global Models
 binary_model = None
@@ -916,7 +920,9 @@ async def analyze_vehicle(
             maintenance_roadmap.append("Apply a clear wax protectant film to maintain base coat reflectiveness.")
 
         # Combined JSON Output
-        return {
+        report_id = f"validauto-scan-{int(time.time() * 1000)}"
+        response_data = {
+            "id": report_id,
             "quality": quality,
             "ocr": ocr_res,
             "images": {
@@ -984,9 +990,40 @@ async def analyze_vehicle(
             }
         }
 
+        try:
+            filepath = os.path.join(DB_DIR, f"{report_id}.json")
+            with open(filepath, "w", encoding="utf-8") as f:
+                json.dump(response_data, f, ensure_ascii=False, indent=2)
+        except Exception as ex:
+            print(f"[DB Error] Failed to save report JSON: {ex}")
+
+        return response_data
+
     except Exception as e:
         print(f"[Error] Image processing failed: {e}")
         raise HTTPException(status_code=500, detail=f"Image processing failed: {str(e)}")
 
 def format_currency(val: int):
     return f"₹{val:,}"
+
+@app.get("/reports/{report_id}")
+async def get_report(report_id: str):
+    filepath = os.path.join(DB_DIR, f"{report_id}.json")
+    if not os.path.exists(filepath):
+        raise HTTPException(status_code=404, detail="Report not found")
+    try:
+        with open(filepath, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to read report: {str(e)}")
+
+@app.delete("/reports/{report_id}")
+async def delete_report(report_id: str):
+    filepath = os.path.join(DB_DIR, f"{report_id}.json")
+    if not os.path.exists(filepath):
+        raise HTTPException(status_code=404, detail="Report not found")
+    try:
+        os.remove(filepath)
+        return {"status": "success", "message": "Report deleted"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to delete report: {str(e)}")

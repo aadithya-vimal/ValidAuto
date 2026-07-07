@@ -142,6 +142,9 @@ export default function HistoryPage() {
       setHistory(updated);
       localStorage.setItem("validauto_history", JSON.stringify(updated));
       
+      // hit the delete backend API route
+      fetch(`${API_BASE_URL}/reports/${id}`, { method: "DELETE" }).catch(() => {});
+
       // Save for Restore
       setDeletedItem(itemToDelete);
       setShowUndoBanner(true);
@@ -201,7 +204,21 @@ export default function HistoryPage() {
     }).format(val);
   };
 
-  const handleItemClick = (item: HistoryItem) => {
+  const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
+
+  const handleItemClick = async (item: HistoryItem) => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/reports/${item.id}`);
+      if (response.ok) {
+        const fullResult = await response.json();
+        localStorage.setItem("validauto_current_analysis", JSON.stringify(fullResult));
+        router.push("/analysis");
+        return;
+      }
+    } catch (e) {
+      console.warn("Backend report query failed, using offline fallback:", e);
+    }
+
     if (item.fullResult) {
       localStorage.setItem("validauto_current_analysis", JSON.stringify(item.fullResult));
     } else {
