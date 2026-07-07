@@ -119,11 +119,11 @@ export default function HistoryPage() {
   const filteredItems = history
     .filter(item => {
       const matchSearch = 
-        item.filename.toLowerCase().includes(search.toLowerCase()) || 
-        item.ownerName.toLowerCase().includes(search.toLowerCase());
+        (item.filename?.toLowerCase() || "").includes(search.toLowerCase()) || 
+        (item.ownerName?.toLowerCase() || "").includes(search.toLowerCase());
       
-      const matchSeverity = filterSeverity === "all" || item.severity.toLowerCase() === filterSeverity.toLowerCase();
-      const matchDamage = filterDamage === "all" || item.damage.toLowerCase() === filterDamage.toLowerCase();
+      const matchSeverity = filterSeverity === "all" || (item.severity?.toLowerCase() || "") === filterSeverity.toLowerCase();
+      const matchDamage = filterDamage === "all" || (item.damage?.toLowerCase() || "") === filterDamage.toLowerCase();
       
       return matchSearch && matchSeverity && matchDamage;
     })
