@@ -1,12 +1,14 @@
 "use client";
 
-import { ShieldAlert, CheckCircle2, AlertTriangle, ShieldCheck } from "lucide-react";
+import { ShieldAlert, AlertTriangle, ShieldCheck } from "lucide-react";
 
 interface SafetyData {
   roadworthy: string;
   night_driving_safe: string;
   highway_safe: string;
+  rain_driving_safe: string;
   long_distance_safe: string;
+  immediate_repair_required: string;
   reason: string;
 }
 
@@ -15,37 +17,67 @@ interface SafetyAuditPanelProps {
   severity: string;
 }
 
-export default function SafetyAuditPanel({ safety, severity }: SafetyAuditPanelProps) {
-  const isSevere = severity.toLowerCase() === "severe";
-  
-  // Rain driving rule: if glass or bumper damage is severe/moderate, rain driving is highly unsafe due to optical reflection or water ingress.
-  const rainDrivingSafe = isSevere ? "No" : "Yes";
+export default function SafetyAuditPanel({ safety }: SafetyAuditPanelProps) {
+  const isUnsafe = safety.roadworthy.toLowerCase() === "unsafe";
+  const isCaution = safety.roadworthy.toLowerCase() === "use with caution";
 
   const getSafetyColor = (val: string) => {
-    return val.toLowerCase() === "yes" 
-      ? "text-brand-emerald bg-brand-emerald/10 border-brand-emerald/20" 
-      : "text-brand-rose bg-brand-rose/10 border-brand-rose/20";
+    const v = val.toLowerCase();
+    if (v === "safe") return "text-brand-emerald bg-brand-emerald/10 border-brand-emerald/20";
+    if (v === "use with caution") return "text-amber-500 bg-amber-500/10 border-amber-500/20";
+    return "text-brand-rose bg-brand-rose/10 border-brand-rose/20";
   };
 
   const getSafetyIcon = (val: string) => {
-    return val.toLowerCase() === "yes" 
-      ? <ShieldCheck className="h-4.5 w-4.5 text-brand-emerald shrink-0" />
-      : <ShieldAlert className="h-4.5 w-4.5 text-brand-rose shrink-0" />;
+    const v = val.toLowerCase();
+    if (v === "safe") return <ShieldCheck className="h-4.5 w-4.5 text-brand-emerald shrink-0" />;
+    if (v === "use with caution") return <AlertTriangle className="h-4.5 w-4.5 text-amber-500 shrink-0" />;
+    return <ShieldAlert className="h-4.5 w-4.5 text-brand-rose shrink-0" />;
   };
 
   const checklist = [
-    { label: "Roadworthy Condition", value: safety.roadworthy, desc: safety.roadworthy === "Yes" ? "Body panel structural mounts are verified secure." : "Structural mounting compromised or missing core pins." },
-    { label: "Night Driving Suitability", value: safety.night_driving_safe, desc: safety.night_driving_safe === "Yes" ? "Headlight and indicator refraction vectors normal." : "High glare refraction risks from fractured glass modules." },
-    { label: "Highway Speed Suitability", value: safety.highway_safe, desc: safety.highway_safe === "Yes" ? "Panels remain aerodynamic under wind pressure." : "Air drag could detach unsecured bumper clips or panel shields." },
-    { label: "Rain Driving Suitability", value: rainDrivingSafe, desc: rainDrivingSafe === "Yes" ? "No water ingress risks identified on panel seals." : "Moisture ingress risk in cracked optical casings or bare metal." },
-    { label: "Long Distance Endurance", value: safety.long_distance_safe, desc: safety.long_distance_safe === "Yes" ? "No immediate mechanical or thermal risk flags." : "Restricted to local driving only to prevent secondary fractures." }
+    { 
+      label: "Roadworthy Condition", 
+      value: safety.roadworthy, 
+      desc: safety.roadworthy === "Safe" ? "Body panel structural mounts are verified secure." :
+            safety.roadworthy === "Use With Caution" ? "Minor structural mounts require checking." :
+            "Structural mounting compromised or safety-critical panels distorted." 
+    },
+    { 
+      label: "Night Driving Suitability", 
+      value: safety.night_driving_safe, 
+      desc: safety.night_driving_safe === "Safe" ? "Headlight refraction indices normal." :
+            safety.night_driving_safe === "Use With Caution" ? "Slight distortion in lens housing." :
+            "High glare refraction risk from shattered or damaged glass/optics." 
+    },
+    { 
+      label: "Highway Speed Suitability", 
+      value: safety.highway_safe, 
+      desc: safety.highway_safe === "Safe" ? "Panels remain aerodynamic under wind pressure." :
+            safety.highway_safe === "Use With Caution" ? "High wind resistance may strain loose clips." :
+            "Air drag could detach unsecured structural components or panel shields." 
+    },
+    { 
+      label: "Rain Driving Suitability", 
+      value: safety.rain_driving_safe, 
+      desc: safety.rain_driving_safe === "Safe" ? "No water ingress risks identified on panel seals." :
+            safety.rain_driving_safe === "Use With Caution" ? "Bare metal scratches exposed to surface rust." :
+            "Moisture ingress risks in cracked optical casings or panel seal gaps." 
+    },
+    { 
+      label: "Long Distance Endurance", 
+      value: safety.long_distance_safe, 
+      desc: safety.long_distance_safe === "Safe" ? "No immediate structural endurance issues." :
+            safety.long_distance_safe === "Use With Caution" ? "Monitor panel seams for secondary vibration gaps." :
+            "Restricted to local driving only to prevent secondary fracture propagation." 
+    }
   ];
 
   return (
     <div className="glass-panel p-5 rounded-2xl border-white/5 space-y-4 print:bg-white print:text-black print:border-none print:shadow-none print:p-0">
       <h4 className="text-xs font-bold text-slate-400 uppercase tracking-widest flex items-center gap-1.5 print:text-slate-800">
         <ShieldAlert className="h-4 w-4 text-brand-cyan" />
-        8. Driving Safety & Roadworthiness Analysis
+        Driving Safety & Roadworthiness Analysis
       </h4>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -75,16 +107,20 @@ export default function SafetyAuditPanel({ safety, severity }: SafetyAuditPanelP
           </div>
 
           <div className={`mt-4 p-3.5 rounded-xl border flex items-start gap-2 text-xs font-bold ${
-            isSevere 
-              ? "bg-brand-rose/10 border-brand-rose/20 text-brand-rose" 
+            safety.immediate_repair_required === "Yes"
+              ? isUnsafe 
+                ? "bg-brand-rose/10 border-brand-rose/20 text-brand-rose" 
+                : "bg-amber-500/10 border-amber-500/20 text-amber-500"
               : "bg-brand-emerald/10 border-brand-emerald/20 text-brand-emerald"
           }`}>
-            {isSevere ? <AlertTriangle className="h-5 w-5 shrink-0 mt-0.5" /> : <CheckCircle2 className="h-5 w-5 shrink-0 mt-0.5" />}
+            {safety.immediate_repair_required === "Yes" ? <AlertTriangle className="h-5 w-5 shrink-0 mt-0.5" /> : <ShieldCheck className="h-5 w-5 shrink-0 mt-0.5" />}
             <div>
               <span className="block uppercase text-[10px]">Immediate Repair Action</span>
               <p className="font-normal text-slate-300 print:text-slate-800 mt-1">
-                {isSevere 
-                  ? "Highly Recommended: Structural and sensor damage requires immediate workshop scheduling." 
+                {safety.immediate_repair_required === "Yes"
+                  ? isUnsafe
+                    ? "Mandatory: Safety components compromised. Mandatory structural workshop scheduling required."
+                    : "Recommended: Moderate issues flagged. Schedule repair at early convenience."
                   : "Not Required: Minor cosmetic defects can be scheduled alongside regular service intervals."}
               </p>
             </div>

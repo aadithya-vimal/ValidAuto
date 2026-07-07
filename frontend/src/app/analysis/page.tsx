@@ -82,7 +82,9 @@ interface LiveAPIResponse {
       roadworthy: string;
       night_driving_safe: string;
       highway_safe: string;
+      rain_driving_safe: string;
       long_distance_safe: string;
+      immediate_repair_required: string;
       reason: string;
     };
     localization: {
@@ -358,10 +360,12 @@ export default function AnalysisPage() {
           ]
         },
         safety: {
-          roadworthy: severity === "Severe" ? "No" : "Yes",
-          night_driving_safe: severity === "Severe" ? "No" : "Yes",
-          highway_safe: severity === "Severe" ? "No" : "Yes",
-          long_distance_safe: severity === "Severe" ? "No" : "Yes",
+          roadworthy: severity === "Severe" ? "Unsafe" : "Safe",
+          night_driving_safe: severity === "Severe" ? "Unsafe" : "Safe",
+          highway_safe: severity === "Severe" ? "Unsafe" : "Safe",
+          rain_driving_safe: severity === "Severe" ? "Unsafe" : "Safe",
+          long_distance_safe: severity === "Severe" ? "Unsafe" : "Safe",
+          immediate_repair_required: severity === "Severe" ? "Yes" : "No",
           reason: severity === "Severe" 
             ? "Severe deformation detected on structural components. Operability restricted to local garage routes."
             : "Cosmetic defects only. Core vehicle lighting and mechanical elements operate normally."
