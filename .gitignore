@@ -24,7 +24,10 @@ backend/app/__pycache__/
 .DS_Store
 Thumbs.db
 
-# Datasets and archives
+# Datasets, database and archives
 data1a/
+data_secondary/
+backend/app/db/
 car-damage-dataset.zip
 repomix-output.xml
+
