@@ -100,19 +100,14 @@ export default function ImageSlider({ original, enhanced, heatmap, localized }: 
           className="absolute inset-0 w-full h-full object-contain pointer-events-none"
         />
 
-        {/* Left clipping image */}
-        <div 
-          className="absolute inset-y-0 left-0 overflow-hidden pointer-events-none"
-          style={{ width: `${sliderPos}%` }}
-        >
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img
-            src={getSrc(leftImage)}
-            alt="Left View"
-            className="absolute inset-y-0 left-0 w-full h-full object-contain pointer-events-none"
-            style={{ width: containerRef.current?.getBoundingClientRect().width || "100%", maxWidth: "none" }}
-          />
-        </div>
+        {/* Left clipped image */}
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          src={getSrc(leftImage)}
+          alt="Left View"
+          className="absolute inset-0 w-full h-full object-contain pointer-events-none"
+          style={{ clipPath: `inset(0px ${100 - sliderPos}% 0px 0px)` }}
+        />
 
         {/* Divider bar */}
         <div 
