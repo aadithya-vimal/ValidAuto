@@ -4,7 +4,6 @@ import { useState, useEffect } from "react";
 import UploadCard from "@/components/UploadCard";
 import ImagePreview from "@/components/ImagePreview";
 import TimelineTracker from "@/components/TimelineTracker";
-import ImageComparer from "@/components/ImageComparer";
 import ImageSlider from "@/components/ImageSlider";
 import InvoiceBreakdown from "@/components/InvoiceBreakdown";
 import SafetyAuditPanel from "@/components/SafetyAuditPanel";
@@ -13,11 +12,9 @@ import CertificateView from "@/components/CertificateView";
 import ImageEditor from "@/components/ImageEditor";
 
 import { 
-  AlertCircle, ServerCrash, RefreshCw, Sparkles, CheckCircle2, Cpu, 
-  FileText, Printer, ShieldAlert, Check, ShieldCheck, HelpCircle, 
-  Activity, Clock, FileCheck, Landmark, ShieldX, Wrench, ChevronDown, ChevronUp,
-  User, Car, Calendar, Hash, Gauge, Image as ImageIcon, Download, Heart,
-  ArrowLeft, ArrowRight, ClipboardCopy, Volume2, Edit2, Sliders, CheckCircle
+  AlertCircle, RefreshCw, Cpu, Download, Volume2, Printer, 
+  User, Car, Calendar, Hash, Gauge, Image as ImageIcon, CheckCircle2,
+  Activity, ClipboardCopy, FileText, X, ArrowLeft, Sliders, ShieldAlert
 } from "lucide-react";
 
 interface LiveAPIResponse {
@@ -103,13 +100,6 @@ interface LiveAPIResponse {
   } | null;
 }
 
-interface ImageSlot {
-  label: "Front" | "Rear" | "Left" | "Right" | "Interior" | "Close-up";
-  file: File | null;
-  base64: string;
-  report: LiveAPIResponse | null;
-}
-
 export default function AnalysisPage() {
   const [currentStep, setCurrentStep] = useState<1 | 2 | 3>(1);
 
@@ -125,29 +115,16 @@ export default function AnalysisPage() {
   const [insuranceProvider, setInsuranceProvider] = useState("");
   const [policyNumber, setPolicyNumber] = useState("");
 
-  // Multiple view slots
-  const [slots, setSlots] = useState<ImageSlot[]>([
-    { label: "Front", file: null, base64: "", report: null },
-    { label: "Rear", file: null, base64: "", report: null },
-    { label: "Left", file: null, base64: "", report: null },
-    { label: "Right", file: null, base64: "", report: null },
-    { label: "Interior", file: null, base64: "", report: null },
-    { label: "Close-up", file: null, base64: "", report: null }
-  ]);
+  // Single Image State
+  const [imageFile, setImageFile] = useState<File | null>(null);
+  const [imageBase64, setImageBase64] = useState<string>("");
+  const [showEditor, setShowEditor] = useState(false);
 
-  // Image editor modal state
-  const [editingSlotIdx, setEditingSlotIdx] = useState<number | null>(null);
-
-  // OCR results container
+  // OCR results
   const [ocrResults, setOcrResults] = useState<LiveAPIResponse["ocr"] | null>(null);
 
-  // Combined Merged Report
-  const [mergedResponse, setMergedResponse] = useState<LiveAPIResponse | null>(null);
-
-  // Dynamic overrides from Invoice profile selectors
-  const [customCosts, setCustomCosts] = useState<NonNullable<LiveAPIResponse["report"]>["repair_costs"] | null>(null);
-  const [customTimeline, setCustomTimeline] = useState<NonNullable<LiveAPIResponse["report"]>["repair_timeline"] | null>(null);
-  const [selectedProfile, setSelectedProfile] = useState<string>("authorized");
+  // Unified API Response
+  const [apiResponse, setApiResponse] = useState<LiveAPIResponse | null>(null);
 
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [loadingStep, setLoadingStep] = useState(0);
@@ -166,29 +143,253 @@ export default function AnalysisPage() {
     return () => clearInterval(interval);
   }, [isAnalyzing]);
 
-  const handleProfileChange = (
-    costs: NonNullable<LiveAPIResponse["report"]>["repair_costs"],
-    timeline: NonNullable<LiveAPIResponse["report"]>["repair_timeline"],
-    profile: string
-  ) => {
-    setCustomCosts(costs);
-    setCustomTimeline(timeline);
-    setSelectedProfile(profile);
+  const isFormValid = () => {
+    return (
+      ownerName.trim() !== "" &&
+      make.trim() !== "" &&
+      modelName.trim() !== "" &&
+      variant.trim() !== "" &&
+      year.trim() !== "" &&
+      regNumber.trim() !== "" &&
+      odometer.trim() !== "" &&
+      !isNaN(Number(year)) &&
+      !isNaN(Number(odometer))
+    );
+  };
+
+  const handleImageSelect = (file: File) => {
+    setImageFile(file);
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      setImageBase64(e.target?.result as string);
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const handleImageClear = () => {
+    setImageFile(null);
+    setImageBase64("");
+    setApiResponse(null);
+    setOcrResults(null);
+  };
+
+  const handleEditorSave = (editedSrc: string) => {
+    const fetchBlob = async () => {
+      const res = await fetch(editedSrc);
+      const blob = await res.blob();
+      const file = new File([blob], "edited_vehicle.jpg", { type: "image/jpeg" });
+      setImageFile(file);
+      setImageBase64(editedSrc);
+      setShowEditor(false);
+    };
+    fetchBlob();
+  };
+
+  const handleVoiceSummary = () => {
+    if (!apiResponse || !apiResponse.report) return;
+    const rep = apiResponse.report;
+    const isDamage = apiResponse.primary_detection.label === "Damage";
+
+    const text = `ValidAuto Inspection Certificate Complete. Overall Vehicle Health Score is ${rep.health_score} out of 100. ${
+      isDamage 
+        ? `Damage detected on body panels, including ${rep.localization.affected_area}. Expected repair cost is ${formatINR(rep.repair_costs.total)}.` 
+        : "No exterior damage was identified."
+    } Driving safety roadworthiness index is ${rep.safety.roadworthy === "Yes" ? "Roadworthy" : "Not Roadworthy"}. Claim recommendation is ${rep.insurance.recommendation}.`;
+
+    const synth = window.speechSynthesis;
+    if (synth) {
+      synth.cancel();
+      const utterance = new SpeechSynthesisUtterance(text);
+      utterance.rate = 1.0;
+      utterance.pitch = 1.05;
+      synth.speak(utterance);
+    }
+  };
+
+  const handleAnalyze = async () => {
+    if (!imageFile || !isFormValid()) return;
+
+    setIsAnalyzing(true);
+    setApiResponse(null);
+    setOcrResults(null);
+
+    const formData = new FormData();
+    formData.append("file", imageFile);
+    formData.append("owner_name", ownerName);
+    formData.append("make", make);
+    formData.append("model_name", modelName);
+    formData.append("variant", variant);
+    formData.append("year", year);
+    formData.append("reg_number", regNumber);
+    formData.append("vin", vin);
+    formData.append("odometer", odometer);
+    formData.append("insurance_provider", insuranceProvider);
+    formData.append("policy_number", policyNumber);
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/analyze`, {
+        method: "POST",
+        body: formData,
+      });
+
+      if (!response.ok) throw new Error("API scan failed.");
+      const data: LiveAPIResponse = await response.json();
+      setApiResponse(data);
+      if (data.ocr) {
+        setOcrResults(data.ocr);
+      }
+      setCurrentStep(3);
+
+      // Save to history
+      try {
+        const thumbnail = await createThumbnail(imageFile);
+        saveToHistoryLogs(data, thumbnail);
+      } catch (e) {
+        console.error("Failed to save history entry:", e);
+      }
+    } catch (err) {
+      console.warn(`FastAPI backend unavailable. Simulating local fallback prediction.`);
+      const simulated = generateLocalMockResponse();
+      setApiResponse(simulated);
+      if (simulated.ocr) {
+        setOcrResults(simulated.ocr);
+      }
+      setCurrentStep(3);
+
+      // Save to history
+      try {
+        const thumbnail = await createThumbnail(imageFile);
+        saveToHistoryLogs(simulated, thumbnail);
+      } catch (e) {
+        console.error("Failed to save history entry:", e);
+      }
+    }
+
+    setIsAnalyzing(false);
+  };
+
+  const generateLocalMockResponse = (): LiveAPIResponse => {
+    const isBumper = modelName.toLowerCase().includes("bumper");
+    const secLabel = isBumper ? "bumper" : "scratch";
+    const secConf = 0.9421;
+    const severity: string = isBumper ? "Severe" : "Minor";
+
+    const basePenalties: Record<string, number> = { scratch: 10, dent: 15, bumper: 20, glass: 25 };
+    const basePenalty = basePenalties[secLabel] || 15;
+    const multiplier = severity === "Minor" ? 0.5 : (severity === "Moderate" ? 1.0 : 2.0);
+    const confPenalty = (1.0 - secConf) * 15;
+    const healthScore = max(0, Math.floor(100 - ((basePenalty * multiplier) + confPenalty + 5)));
+
+    const subtotal = Math.floor((isBumper ? 9000 : 2000) * multiplier);
+    const gstVal = Math.floor(subtotal * 0.18);
+    const totalCost = subtotal + gstVal;
+
+    const repairDays = severity === "Minor" ? 1 : (severity === "Moderate" ? 2 : 4);
+    const workingHours = severity === "Minor" ? 2 : (severity === "Moderate" ? 6 : 12);
+    const dateStr = new Date();
+    dateStr.setDate(dateStr.getDate() + repairDays);
+
+    return {
+      quality: {
+        resolution: "1280 x 720 px",
+        brightness: 110.45,
+        blur_score: 85.32,
+        rating: "Good",
+        suitability: "Suitable",
+        reason: "Image meets quality standards."
+      },
+      ocr: {
+        registration: { value: "DL-3C-AQ-4921", confidence: 0.91, uncertain_indices: [8, 9] },
+        vin: { value: "1FMCU9GD5LUD82910", confidence: 0.86, uncertain_indices: [14, 15] },
+        chassis: { value: null, confidence: 0.0, uncertain_indices: [] }
+      },
+      images: {
+        original: imageBase64,
+        enhanced: imageBase64,
+        heatmap: imageBase64,
+        localized: imageBase64
+      },
+      primary_detection: {
+        label: "Damage",
+        confidence: 0.9856
+      },
+      secondary_classification: {
+        label: secLabel.toUpperCase(),
+        confidence: secConf
+      },
+      report: {
+        vehicle_info: {
+          owner_name: ownerName,
+          make: make,
+          model_name: modelName,
+          variant: variant,
+          year: Number(year),
+          reg_number: regNumber,
+          vin: vin ? vin : "N/A",
+          odometer: Number(odometer),
+          insurance_provider: insuranceProvider ? insuranceProvider : "N/A",
+          policy_number: policyNumber ? policyNumber : "N/A"
+        },
+        health_score: healthScore,
+        health_explanation: `Base Penalty: ${(basePenalty * multiplier).toFixed(1)} (Category: ${secLabel}, Severity: ${severity}). Confidence Penalty: ${confPenalty.toFixed(1)}. Coverage Penalty: 4.5. Safety Risk Penalty: 0.0.`,
+        severity: severity,
+        repair_costs: {
+          parts: isBumper ? 9000 : 0,
+          labour: isBumper ? 3000 : 2000,
+          paint: isBumper ? 4500 : 3500,
+          gst: gstVal,
+          total: totalCost
+        },
+        repair_timeline: {
+          working_hours: workingHours,
+          repair_days: repairDays,
+          completion_date: dateStr.toISOString().split("T")[0]
+        },
+        insurance: {
+          recommendation: severity === "Minor" ? "Self Repair Recommended" : (severity === "Moderate" ? "Likely Approved" : "Immediate Inspection Required"),
+          reason: severity === "Minor" 
+            ? `Estimated repair cost (₹${totalCost.toLocaleString()}) falls below typical deductibles. Out-of-pocket payment preserves NCB.`
+            : `Repair expenses warrant claims. Defects fit standard coverage rules.`,
+          required_docs: [
+            "Active Comprehensive Insurance Policy Certificate",
+            "Driving License (DL) of Driver",
+            "Vehicle Registration Certificate (RC Book)",
+            "Pre-repair Garage Estimate Invoice"
+          ]
+        },
+        safety: {
+          roadworthy: severity === "Severe" ? "No" : "Yes",
+          night_driving_safe: severity === "Severe" ? "No" : "Yes",
+          highway_safe: severity === "Severe" ? "No" : "Yes",
+          long_distance_safe: severity === "Severe" ? "No" : "Yes",
+          reason: severity === "Severe" 
+            ? "Severe deformation detected on structural components. Operability restricted to local garage routes."
+            : "Cosmetic defects only. Core vehicle lighting and mechanical elements operate normally."
+        },
+        localization: {
+          coverage_pct: 3.42,
+          num_regions: 2,
+          largest_region_pct: 2.15,
+          affected_area: `Panel`
+        },
+        maintenance: [
+          "Seal bare metal areas within 48 hours to avoid surface oxidation and rust.",
+          "Keep records of this digital inspection log for claims and future resale documentation."
+        ],
+        description: `Cosmetic or structural impact detected on the vehicle exterior body panels (Classified as ${secLabel}).`,
+        possible_cause: severity === "Minor" ? "Brushing against light road grit or light bushes." : "Low-speed bumper tap or parking lot backing collision.",
+        explanation: `The classifier detected visual features consistent with ${secLabel} defects, including localized deformation or surface line abrasions.`,
+        timestamp: new Date().toISOString(),
+        inference_time_seconds: 0.054
+      }
+    };
   };
 
   const handleClear = () => {
-    setSlots([
-      { label: "Front", file: null, base64: "", report: null },
-      { label: "Rear", file: null, base64: "", report: null },
-      { label: "Left", file: null, base64: "", report: null },
-      { label: "Right", file: null, base64: "", report: null },
-      { label: "Interior", file: null, base64: "", report: null },
-      { label: "Close-up", file: null, base64: "", report: null }
-    ]);
-    setMergedResponse(null);
+    setImageFile(null);
+    setImageBase64("");
+    setApiResponse(null);
     setOcrResults(null);
-    setCustomCosts(null);
-    setCustomTimeline(null);
   };
 
   const createThumbnail = (file: File): Promise<string> => {
@@ -257,383 +458,6 @@ export default function AnalysisPage() {
     localStorage.setItem("validauto_history", JSON.stringify(historyList.slice(0, 30)));
   };
 
-  const isFormValid = () => {
-    return (
-      ownerName.trim() !== "" &&
-      make.trim() !== "" &&
-      modelName.trim() !== "" &&
-      variant.trim() !== "" &&
-      year.trim() !== "" &&
-      regNumber.trim() !== "" &&
-      odometer.trim() !== "" &&
-      !isNaN(Number(year)) &&
-      !isNaN(Number(odometer))
-    );
-  };
-
-  const handleSlotUpload = (idx: number, file: File) => {
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      const b64 = e.target?.result as string;
-      setSlots((prev) => {
-        const copy = [...prev];
-        copy[idx] = { ...copy[idx], file, base64: b64, report: null };
-        return copy;
-      });
-    };
-    reader.readAsDataURL(file);
-  };
-
-  const handleSlotClear = (idx: number) => {
-    setSlots((prev) => {
-      const copy = [...prev];
-      copy[idx] = { ...copy[idx], file: null, base64: "", report: null };
-      return copy;
-    });
-  };
-
-  const handleEditorSave = (editedSrc: string) => {
-    if (editingSlotIdx === null) return;
-    
-    // Convert base64 edited image back to File object
-    const fetchBlob = async () => {
-      const res = await fetch(editedSrc);
-      const blob = await res.blob();
-      const file = new File([blob], `edited_${slots[editingSlotIdx].label}.jpg`, { type: "image/jpeg" });
-      
-      setSlots((prev) => {
-        const copy = [...prev];
-        copy[editingSlotIdx] = { ...copy[editingSlotIdx], file, base64: editedSrc };
-        return copy;
-      });
-      setEditingSlotIdx(null);
-    };
-    fetchBlob();
-  };
-
-  // Speaks inspection results aloud
-  const handleVoiceSummary = () => {
-    if (!mergedResponse || !mergedResponse.report) return;
-    const rep = mergedResponse.report;
-    const isDamage = mergedResponse.primary_detection.label === "Damage";
-
-    const text = `ValidAuto Inspection Certificate Complete. Overall Vehicle Health Score is ${rep.health_score} out of 100. ${
-      isDamage 
-        ? `Damage detected on body panels, including ${rep.localization.affected_area}. Expected repair cost under ${selectedProfile} profile is ${formatINR(customCosts?.total || rep.repair_costs.total)}.` 
-        : "No exterior damage was identified."
-    } Driving safety roadworthiness index is ${rep.safety.roadworthy === "Yes" ? "Roadworthy" : "Not Roadworthy"}. Claim recommendation is ${rep.insurance.recommendation}.`;
-
-    const synth = window.speechSynthesis;
-    if (synth) {
-      synth.cancel();
-      const utterance = new SpeechSynthesisUtterance(text);
-      utterance.rate = 1.0;
-      utterance.pitch = 1.05;
-      synth.speak(utterance);
-    }
-  };
-
-  const handleAnalyzeMulti = async () => {
-    const activeSlots = slots.filter((s) => s.file !== null);
-    if (activeSlots.length === 0 || !isFormValid()) return;
-
-    setIsAnalyzing(true);
-    setMergedResponse(null);
-    setOcrResults(null);
-
-    const responses: LiveAPIResponse[] = [];
-
-    for (let i = 0; i < slots.length; i++) {
-      const slot = slots[i];
-      if (!slot.file) continue;
-
-      const formData = new FormData();
-      formData.append("file", slot.file);
-      formData.append("owner_name", ownerName);
-      formData.append("make", make);
-      formData.append("model_name", modelName);
-      formData.append("variant", variant);
-      formData.append("year", year);
-      formData.append("reg_number", regNumber);
-      formData.append("vin", vin);
-      formData.append("odometer", odometer);
-      formData.append("insurance_provider", insuranceProvider);
-      formData.append("policy_number", policyNumber);
-
-      try {
-        const response = await fetch(`${API_BASE_URL}/analyze`, {
-          method: "POST",
-          body: formData,
-        });
-
-        if (!response.ok) throw new Error("API scan failed.");
-        const data: LiveAPIResponse = await response.json();
-        responses.push(data);
-        
-        // Capture OCR from the first valid image (usually Front/Rear)
-        if (data.ocr && !ocrResults) {
-          setOcrResults(data.ocr);
-        }
-      } catch (err) {
-        console.warn(`FastAPI backend unavailable for slot ${slot.label}. Simulating local fallback prediction.`);
-        const simulated = generateLocalMockForSlot(slot);
-        responses.push(simulated);
-        if (simulated.ocr && !ocrResults) {
-          setOcrResults(simulated.ocr);
-        }
-      }
-    }
-
-    if (responses.length > 0) {
-      const merged = mergeReports(responses);
-      setMergedResponse(merged);
-      setCurrentStep(3);
-
-      // Save to history
-      try {
-        const thumbnail = await createThumbnail(activeSlots[0].file!);
-        saveToHistoryLogs(merged, thumbnail);
-      } catch (e) {
-        console.error("Failed to save history entry:", e);
-      }
-    }
-
-    setIsAnalyzing(false);
-  };
-
-  const generateLocalMockForSlot = (slot: ImageSlot): LiveAPIResponse => {
-    const isBumper = modelName.toLowerCase().includes("bumper") || slot.label === "Front" || slot.label === "Rear";
-    const secLabel = isBumper ? "bumper" : "scratch";
-    const secConf = 0.9421;
-    const severity: string = isBumper ? "Severe" : "Minor";
-
-    const basePenalties: Record<string, number> = { scratch: 10, dent: 15, bumper: 20, glass: 25 };
-    const basePenalty = basePenalties[secLabel] || 15;
-    const multiplier = severity === "Minor" ? 0.5 : (severity === "Moderate" ? 1.0 : 2.0);
-    const confPenalty = (1.0 - secConf) * 15;
-    const healthScore = max(0, Math.floor(100 - ((basePenalty * multiplier) + confPenalty + 5)));
-
-    const subtotal = Math.floor((isBumper ? 9000 : 2000) * multiplier);
-    const gstVal = Math.floor(subtotal * 0.18);
-    const totalCost = subtotal + gstVal;
-
-    const repairDays = severity === "Minor" ? 1 : (severity === "Moderate" ? 2 : 4);
-    const workingHours = severity === "Minor" ? 2 : (severity === "Moderate" ? 6 : 12);
-    const dateStr = new Date();
-    dateStr.setDate(dateStr.getDate() + repairDays);
-
-    return {
-      quality: {
-        resolution: "1280 x 720 px",
-        brightness: 110.45,
-        blur_score: 85.32,
-        rating: "Good",
-        suitability: "Suitable",
-        reason: "Image meets quality standards."
-      },
-      ocr: {
-        registration: { value: "DL-3C-AQ-4921", confidence: 0.91, uncertain_indices: [8, 9] },
-        vin: { value: "1FMCU9GD5LUD82910", confidence: 0.86, uncertain_indices: [14, 15] },
-        chassis: { value: null, confidence: 0.0, uncertain_indices: [] }
-      },
-      images: {
-        original: slot.base64,
-        enhanced: slot.base64,
-        heatmap: slot.base64,
-        localized: slot.base64
-      },
-      primary_detection: {
-        label: "Damage",
-        confidence: 0.9856
-      },
-      secondary_classification: {
-        label: secLabel.toUpperCase(),
-        confidence: secConf
-      },
-      report: {
-        vehicle_info: {
-          owner_name: ownerName,
-          make: make,
-          model_name: modelName,
-          variant: variant,
-          year: Number(year),
-          reg_number: regNumber,
-          vin: vin ? vin : "N/A",
-          odometer: Number(odometer),
-          insurance_provider: insuranceProvider ? insuranceProvider : "N/A",
-          policy_number: policyNumber ? policyNumber : "N/A"
-        },
-        health_score: healthScore,
-        health_explanation: `Base Penalty: ${(basePenalty * multiplier).toFixed(1)} (Category: ${secLabel}, Severity: ${severity}). Confidence Penalty: ${confPenalty.toFixed(1)}. Coverage Penalty: 4.5. Safety Risk Penalty: 0.0.`,
-        severity: severity,
-        repair_costs: {
-          parts: isBumper ? 9000 : 0,
-          labour: isBumper ? 3000 : 2000,
-          paint: isBumper ? 4500 : 3500,
-          gst: gstVal,
-          total: totalCost
-        },
-        repair_timeline: {
-          working_hours: workingHours,
-          repair_days: repairDays,
-          completion_date: dateStr.toISOString().split("T")[0]
-        },
-        insurance: {
-          recommendation: severity === "Minor" ? "Self Repair Recommended" : (severity === "Moderate" ? "Likely Approved" : "Immediate Inspection Required"),
-          reason: severity === "Minor" 
-            ? `Estimated repair cost (₹${totalCost.toLocaleString()}) falls below typical deductibles. Out-of-pocket payment preserves NCB.`
-            : `Repair expenses warrant claims. Defects fit standard coverage rules.`,
-          required_docs: [
-            "Active Comprehensive Insurance Policy Certificate",
-            "Driving License (DL) of Driver",
-            "Vehicle Registration Certificate (RC Book)",
-            "Pre-repair Garage Estimate Invoice"
-          ]
-        },
-        safety: {
-          roadworthy: severity === "Severe" ? "No" : "Yes",
-          night_driving_safe: severity === "Severe" ? "No" : "Yes",
-          highway_safe: severity === "Severe" ? "No" : "Yes",
-          long_distance_safe: severity === "Severe" ? "No" : "Yes",
-          reason: severity === "Severe" 
-            ? "Severe deformation detected on structural components. Operability restricted to local garage routes."
-            : "Cosmetic defects only. Core vehicle lighting and mechanical elements operate normally."
-        },
-        localization: {
-          coverage_pct: 3.42,
-          num_regions: 2,
-          largest_region_pct: 2.15,
-          affected_area: `${slot.label} Panel`
-        },
-        maintenance: [
-          "Seal bare metal areas within 48 hours to avoid surface oxidation and rust.",
-          "Keep records of this digital inspection log for claims and future resale documentation."
-        ],
-        description: `Cosmetic or structural impact detected on the vehicle exterior body panels (Classified as ${secLabel}).`,
-        possible_cause: severity === "Minor" ? "Brushing against light road grit or light bushes." : "Low-speed bumper tap or parking lot backing collision.",
-        explanation: `The classifier detected visual features consistent with ${secLabel} defects, including localized deformation or surface line abrasions.`,
-        timestamp: new Date().toISOString(),
-        inference_time_seconds: 0.054
-      }
-    };
-  };
-
-  const mergeReports = (responses: LiveAPIResponse[]): LiveAPIResponse => {
-    const reports = responses.map(r => r.report).filter((rep): rep is NonNullable<typeof rep> => rep !== null);
-    
-    if (reports.length === 0) {
-      return responses[0];
-    }
-
-    const minHealth = Math.min(...reports.map(r => r.health_score));
-    
-    const mergedCosts = {
-      parts: reports.reduce((acc, r) => acc + r.repair_costs.parts, 0),
-      labour: reports.reduce((acc, r) => acc + r.repair_costs.labour, 0),
-      paint: reports.reduce((acc, r) => acc + r.repair_costs.paint, 0),
-      gst: reports.reduce((acc, r) => acc + r.repair_costs.gst, 0),
-      total: reports.reduce((acc, r) => acc + r.repair_costs.total, 0),
-    };
-
-    const maxDays = Math.max(...reports.map(r => r.repair_timeline.repair_days));
-    const mergedTimeline = {
-      working_hours: reports.reduce((acc, r) => acc + r.repair_timeline.working_hours, 0),
-      repair_days: maxDays,
-      completion_date: reports.map(r => r.repair_timeline.completion_date).sort().reverse()[0]
-    };
-
-    const severities = reports.map(r => r.severity);
-    let overallSeverity = "Minor";
-    if (severities.includes("Severe")) overallSeverity = "Severe";
-    else if (severities.includes("Moderate")) overallSeverity = "Moderate";
-
-    const damageList: string[] = [];
-    responses.forEach((resp, idx) => {
-      if (resp.report && resp.primary_detection.label === "Damage") {
-        damageList.push(`${resp.report.localization.affected_area}: ${resp.secondary_classification.label} (${resp.report.severity})`);
-      }
-    });
-
-    const isRoadworthy = reports.map(r => r.safety.roadworthy).includes("No") ? "No" : "Yes";
-    const isNightSafe = reports.map(r => r.safety.night_driving_safe).includes("No") ? "No" : "Yes";
-    const isHighwaySafe = reports.map(r => r.safety.highway_safe).includes("No") ? "No" : "Yes";
-    const isLongSafe = reports.map(r => r.safety.long_distance_safe).includes("No") ? "No" : "Yes";
-
-    let unifiedRec = "Self Repair Recommended";
-    let unifiedInsReason = "Minimal damage. Paying out-of-pocket preserves No Claim Bonus.";
-    if (overallSeverity === "Severe") {
-      unifiedRec = "Immediate Inspection Required";
-      unifiedInsReason = "Severe structural panel deformation. Claims require surveyor validation.";
-    } else if (overallSeverity === "Moderate") {
-      unifiedRec = "Likely Approved";
-      unifiedInsReason = "Comprehensive policy claim advised. Damage matches collision criteria.";
-    }
-
-    const avgBrightness = responses.reduce((acc, r) => acc + r.quality.brightness, 0) / responses.length;
-    const avgBlur = responses.reduce((acc, r) => acc + r.quality.blur_score, 0) / responses.length;
-
-    const areasList = reports.map(r => r.localization.affected_area);
-    const combinedArea = areasList.length > 0 ? areasList.join(", ") : "Estimated Damaged Panels";
-
-    return {
-      quality: {
-        resolution: responses[0].quality.resolution,
-        brightness: Number(avgBrightness.toFixed(2)),
-        blur_score: Number(avgBlur.toFixed(2)),
-        rating: responses.map(r => r.quality.rating).includes("Poor") ? "Poor" : "Good",
-        suitability: "Suitable",
-        reason: "Multi-image diagnostic completed successfully."
-      },
-      ocr: responses[0].ocr,
-      images: {
-        original: responses[0].images.original,
-        enhanced: responses[0].images.enhanced,
-        heatmap: responses[0].images.heatmap,
-        localized: responses[0].images.localized
-      },
-      primary_detection: {
-        label: damageList.length > 0 ? "Damage" : "No Damage",
-        confidence: responses[0].primary_detection.confidence
-      },
-      secondary_classification: {
-        label: damageList.length > 0 ? reports[0].description : "None",
-        confidence: responses[0].secondary_classification.confidence
-      },
-      report: {
-        vehicle_info: reports[0].vehicle_info,
-        health_score: minHealth,
-        health_explanation: `Overall health index compiled from ${reports.length} view slots. Minimum condition score of ${minHealth}% selected.`,
-        severity: overallSeverity,
-        repair_costs: mergedCosts,
-        repair_timeline: mergedTimeline,
-        insurance: {
-          recommendation: unifiedRec,
-          reason: unifiedInsReason,
-          required_docs: reports[0].insurance.required_docs
-        },
-        safety: {
-          roadworthy: isRoadworthy,
-          night_driving_safe: isNightSafe,
-          highway_safe: isHighwaySafe,
-          long_distance_safe: isLongSafe,
-          reason: `Aggregated roadworthiness ratings across all ${reports.length} analyzed slots.`
-        },
-        localization: {
-          coverage_pct: Number(reports.reduce((acc, r) => acc + r.localization.coverage_pct, 0).toFixed(2)),
-          num_regions: reports.reduce((acc, r) => acc + r.localization.num_regions, 0),
-          largest_region_pct: Math.max(...reports.map(r => r.localization.largest_region_pct)),
-          affected_area: combinedArea
-        },
-        maintenance: reports[0].maintenance,
-        description: `Combined Audit: ${damageList.join("; ")}`,
-        possible_cause: reports[0].possible_cause,
-        explanation: reports[0].explanation,
-        timestamp: new Date().toISOString(),
-        inference_time_seconds: responses.reduce((acc, r) => acc + r.report!.inference_time_seconds, 0)
-      }
-    };
-  };
-
   const handleApplyOCR = () => {
     if (ocrResults?.registration.value) {
       setRegNumber(ocrResults.registration.value);
@@ -643,7 +467,6 @@ export default function AnalysisPage() {
     }
   };
 
-  // Highlights indices where OCR is uncertain
   const renderHighlightedString = (val: string, uncertainIndices: number[]) => {
     return val.split("").map((char, i) => {
       const isUncertain = uncertainIndices.includes(i);
@@ -659,8 +482,8 @@ export default function AnalysisPage() {
   };
 
   const handleExportJSON = () => {
-    if (!mergedResponse) return;
-    const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(mergedResponse, null, 2));
+    if (!apiResponse) return;
+    const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(apiResponse, null, 2));
     const link = document.createElement("a");
     link.setAttribute("href", dataStr);
     link.setAttribute("download", `validauto_inspection_${regNumber.replace(/-/g, "")}.json`);
@@ -670,8 +493,8 @@ export default function AnalysisPage() {
   };
 
   const handleExportCSV = () => {
-    if (!mergedResponse || !mergedResponse.report) return;
-    const rep = mergedResponse.report;
+    if (!apiResponse || !apiResponse.report) return;
+    const rep = apiResponse.report;
     const headers = ["Owner", "Make", "Model", "RegNo", "HealthScore", "DamageType", "Severity", "TotalCost"];
     const row = [
       rep.vehicle_info.owner_name,
@@ -679,9 +502,9 @@ export default function AnalysisPage() {
       rep.vehicle_info.model_name,
       rep.vehicle_info.reg_number,
       rep.health_score,
-      mergedResponse.secondary_classification.label,
+      apiResponse.secondary_classification.label,
       rep.severity,
-      customCosts ? customCosts.total : rep.repair_costs.total
+      rep.repair_costs.total
     ];
     const csvContent = "data:text/csv;charset=utf-8," + [headers.join(","), row.join(",")].join("\n");
     const link = document.createElement("a");
@@ -703,9 +526,8 @@ export default function AnalysisPage() {
   };
 
   const getDynamicExplainability = () => {
-    if (!mergedResponse) return "";
-    const label = mergedResponse.secondary_classification.label;
-    const area = mergedResponse.report?.localization?.affected_area || "estimated damaged region";
+    if (!apiResponse) return "";
+    const area = apiResponse.report?.localization?.affected_area || "estimated damaged region";
     return `The classifier focused primarily on the ${area} where irregular surface deformation, shadow discontinuities, and edge distortions closely matched the learned visual characteristics of defects.`;
   };
 
@@ -752,7 +574,7 @@ export default function AnalysisPage() {
       {currentStep === 1 && (
         <div className="glass-panel rounded-2xl p-6 md:p-8 space-y-6 max-w-3xl mx-auto border-white/10 shadow-xl shadow-slate-950/40">
           <div className="border-b border-white/5 pb-4 flex items-center gap-2.5">
-            <Landmark className="h-6 w-6 text-brand-cyan" />
+            <Cpu className="h-6 w-6 text-brand-cyan" />
             <div>
               <h3 className="text-lg font-bold text-white">Stage 1: Vehicle Information Intake</h3>
               <p className="text-xs text-slate-400">Provide details. Fill out form or pull values automatically from OCR in Step 2.</p>
@@ -871,68 +693,63 @@ export default function AnalysisPage() {
               disabled={!isFormValid()}
               className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-brand-indigo to-brand-cyan px-6 py-3 font-bold text-white shadow shadow-brand-indigo/25 disabled:opacity-40 transition-all hover:scale-[1.01] cursor-pointer"
             >
-              Next: Image Scan slots
+              Next: Upload Photo
               <ArrowLeft className="h-4 w-4 rotate-180" />
             </button>
           </div>
         </div>
       )}
 
-      {/* STEP 2: MULTI-IMAGE SCAN SLOTS & IMAGE EDITOR */}
+      {/* STEP 2: SINGLE IMAGE SCAN & EDITOR */}
       {currentStep === 2 && (
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
           <div className="lg:col-span-8 space-y-6 print:hidden">
-            <h3 className="text-sm font-bold text-slate-400 tracking-wider uppercase">Stage 2: Multi-View Photo Upload</h3>
+            <h3 className="text-sm font-bold text-slate-400 tracking-wider uppercase">Stage 2: Photo Upload</h3>
             
-            {/* Grid slots */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-5">
-              {slots.map((slot, idx) => (
-                <div key={idx} className="glass-panel border-white/5 bg-slate-900/40 p-4 rounded-2xl flex flex-col justify-between items-center gap-3">
-                  <span className="text-xs font-black text-white">{slot.label} Angle</span>
-                  
-                  {slot.base64 ? (
-                    <div className="w-full space-y-3">
-                      <div className="relative aspect-video rounded-xl overflow-hidden border border-white/10 bg-black flex items-center justify-center">
-                        {/* eslint-disable-next-line @next/next/no-img-element */}
-                        <img src={slot.base64} alt={slot.label} className="h-full object-cover w-full" />
-                        <button 
-                          onClick={() => setEditingSlotIdx(idx)}
-                          className="absolute bottom-2 right-2 p-1.5 rounded-lg bg-slate-950/80 border border-white/10 text-brand-cyan hover:bg-slate-900"
-                        >
-                          <Edit2 className="h-4 w-4" />
-                        </button>
-                      </div>
-                      <div className="flex gap-2 text-[10px] font-bold">
-                        <button 
-                          onClick={() => setEditingSlotIdx(idx)}
-                          className="flex-1 bg-white/5 border border-white/10 py-1.5 rounded-lg text-slate-300 hover:text-white"
-                        >
-                          Edit File
-                        </button>
-                        <button 
-                          onClick={() => handleSlotClear(idx)}
-                          className="flex-1 bg-brand-rose/10 border border-brand-rose/20 py-1.5 rounded-lg text-brand-rose hover:bg-brand-rose/20"
-                        >
-                          Remove
-                        </button>
-                      </div>
-                    </div>
-                  ) : (
-                    <UploadCard onImageSelect={(file) => handleSlotUpload(idx, file)} />
-                  )}
+            <div className="glass-panel border-white/5 bg-slate-900/40 p-6 rounded-2xl flex flex-col items-center gap-5">
+              <span className="text-xs font-black text-white">Vehicle Exterior View</span>
+              
+              {imageBase64 ? (
+                <div className="w-full max-w-md space-y-4">
+                  <div className="relative aspect-video rounded-xl overflow-hidden border border-white/10 bg-black flex items-center justify-center">
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img src={imageBase64} alt="Vehicle Upload" className="h-full object-cover w-full" />
+                    <button 
+                      onClick={() => setShowEditor(true)}
+                      className="absolute bottom-2 right-2 p-1.5 rounded-lg bg-slate-950/80 border border-white/10 text-brand-cyan hover:bg-slate-900"
+                    >
+                      <Sliders className="h-4 w-4" />
+                    </button>
+                  </div>
+                  <div className="flex gap-2 text-xs font-bold">
+                    <button 
+                      onClick={() => setShowEditor(true)}
+                      className="flex-1 bg-white/5 border border-white/10 py-2.5 rounded-lg text-slate-300 hover:text-white"
+                    >
+                      Pre-process Photo
+                    </button>
+                    <button 
+                      onClick={handleImageClear}
+                      className="flex-1 bg-brand-rose/10 border border-brand-rose/20 py-2.5 rounded-lg text-brand-rose hover:bg-brand-rose/20"
+                    >
+                      Remove
+                    </button>
+                  </div>
                 </div>
-              ))}
+              ) : (
+                <UploadCard onImageSelect={handleImageSelect} />
+              )}
             </div>
 
             {/* Run button */}
             <div className="flex justify-end pt-4 border-t border-white/5">
               <button
-                onClick={handleAnalyzeMulti}
-                disabled={slots.filter(s => s.file !== null).length === 0}
+                onClick={handleAnalyze}
+                disabled={!imageFile}
                 className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-brand-indigo to-brand-cyan px-6 py-3 font-bold text-white shadow shadow-brand-indigo/25 disabled:opacity-40 transition-all hover:scale-[1.01] cursor-pointer"
               >
                 <Cpu className="h-4 w-4" />
-                Run Multi-View Analysis
+                Run AI Diagnosis
               </button>
             </div>
           </div>
@@ -941,14 +758,14 @@ export default function AnalysisPage() {
             <TimelineTracker 
               currentStep={2} 
               isAnalyzing={isAnalyzing} 
-              isCompleted={mergedResponse !== null} 
+              isCompleted={apiResponse !== null} 
             />
 
             {/* OCR Card Overlay */}
             {ocrResults && (
               <div className="glass-panel p-5 rounded-2xl border-white/5 space-y-4">
                 <h4 className="text-xs font-bold text-slate-400 uppercase tracking-widest flex items-center gap-1.5">
-                  <ShieldCheck className="h-4.5 w-4.5 text-brand-cyan" />
+                  <ShieldAlert className="h-4.5 w-4.5 text-brand-cyan" />
                   OCR Scan Extractor
                 </h4>
 
@@ -985,7 +802,7 @@ export default function AnalysisPage() {
       )}
 
       {/* STEP 3: RESULTS AUDIT DASHBOARD */}
-      {currentStep === 3 && mergedResponse && mergedResponse.report && (
+      {currentStep === 3 && apiResponse && apiResponse.report && (
         <div className="space-y-8 print:p-0 print:space-y-0">
           
           {/* Dashboard Control Bar */}
@@ -1039,10 +856,10 @@ export default function AnalysisPage() {
               
               {/* Visual Slider Comparer */}
               <ImageSlider
-                original={mergedResponse.images.original}
-                enhanced={mergedResponse.images.enhanced}
-                heatmap={mergedResponse.images.heatmap}
-                localized={mergedResponse.images.localized}
+                original={apiResponse.images.original}
+                enhanced={apiResponse.images.enhanced}
+                heatmap={apiResponse.images.heatmap}
+                localized={apiResponse.images.localized}
               />
 
               {/* Damage Localization stats */}
@@ -1055,19 +872,19 @@ export default function AnalysisPage() {
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                   <div className="bg-black/20 border border-white/5 p-4 rounded-xl">
                     <span className="block text-[8px] text-slate-500 uppercase font-bold">Damage Coverage</span>
-                    <span className="block text-lg font-extrabold text-white mt-1">{mergedResponse.report.localization.coverage_pct}%</span>
+                    <span className="block text-lg font-extrabold text-white mt-1">{apiResponse.report.localization.coverage_pct}%</span>
                   </div>
                   <div className="bg-black/20 border border-white/5 p-4 rounded-xl">
                     <span className="block text-[8px] text-slate-500 uppercase font-bold">Regions Detected</span>
-                    <span className="block text-lg font-extrabold text-white mt-1">{mergedResponse.report.localization.num_regions} Region(s)</span>
+                    <span className="block text-lg font-extrabold text-white mt-1">{apiResponse.report.localization.num_regions} Region(s)</span>
                   </div>
                   <div className="bg-black/20 border border-white/5 p-4 rounded-xl">
                     <span className="block text-[8px] text-slate-500 uppercase font-bold">Largest Region</span>
-                    <span className="block text-lg font-extrabold text-white mt-1">{mergedResponse.report.localization.largest_region_pct}%</span>
+                    <span className="block text-lg font-extrabold text-white mt-1">{apiResponse.report.localization.largest_region_pct}%</span>
                   </div>
                   <div className="bg-black/20 border border-white/5 p-4 rounded-xl">
                     <span className="block text-[8px] text-slate-500 uppercase font-bold">Affected Component</span>
-                    <span className="block text-xs font-extrabold text-white mt-1.5 leading-normal truncate">{mergedResponse.report.localization.affected_area}</span>
+                    <span className="block text-xs font-extrabold text-white mt-1.5 leading-normal truncate">{apiResponse.report.localization.affected_area}</span>
                   </div>
                 </div>
               </div>
@@ -1080,8 +897,8 @@ export default function AnalysisPage() {
                 </h4>
                 
                 {(() => {
-                  const interp = interpretConfidence(mergedResponse.secondary_classification.confidence);
-                  const isLow = mergedResponse.secondary_classification.confidence < 0.80;
+                  const interp = interpretConfidence(apiResponse.secondary_classification.confidence);
+                  const isLow = apiResponse.secondary_classification.confidence < 0.80;
                   return (
                     <div className={`p-4 rounded-xl border flex items-start gap-2.5 text-xs ${
                       isLow ? "bg-brand-rose/10 border-brand-rose/20 text-brand-rose" : "bg-brand-emerald/10 border-brand-emerald/20 text-brand-emerald"
@@ -1096,17 +913,16 @@ export default function AnalysisPage() {
                 })()}
               </div>
 
-              {/* Repair Selector */}
+              {/* Repair Invoice (One source of truth, no overrides) */}
               <InvoiceBreakdown
-                baseCosts={mergedResponse.report.repair_costs}
-                baseTimeline={mergedResponse.report.repair_timeline}
-                onProfileChange={handleProfileChange}
+                costs={apiResponse.report.repair_costs}
+                timeline={apiResponse.report.repair_timeline}
               />
 
               {/* Safety Assessor */}
               <SafetyAuditPanel
-                safety={mergedResponse.report.safety}
-                severity={mergedResponse.report.severity}
+                safety={apiResponse.report.safety}
+                severity={apiResponse.report.severity}
               />
 
               {/* Dynamic Explainability */}
@@ -1139,13 +955,13 @@ export default function AnalysisPage() {
 
                 <div className="text-center py-2">
                   <span className="block text-[8px] text-slate-500 uppercase font-bold">Calculated Health Index</span>
-                  <span className="text-4xl font-black text-white">{mergedResponse.report.health_score}/100</span>
+                  <span className="text-4xl font-black text-white">{apiResponse.report.health_score}/100</span>
                 </div>
 
                 <div className="border-t border-white/5 pt-3 space-y-2 text-[10px] font-mono text-slate-300">
                   <span className="block text-[8px] text-slate-500 uppercase font-bold">Calculation Steps:</span>
                   <p className="leading-relaxed bg-black/20 p-3 rounded-lg border border-white/5">
-                    {mergedResponse.report.health_explanation}
+                    {apiResponse.report.health_explanation}
                   </p>
                 </div>
               </div>
@@ -1155,11 +971,11 @@ export default function AnalysisPage() {
                 primaryModel="MobileNetV2 Transfer-Learning v1"
                 secondaryModel="MobileNetV2 Damage Categorizer"
                 tfVersion="2.21.0 / Keras 3"
-                inferenceTime={mergedResponse.report.inference_time_seconds}
+                inferenceTime={apiResponse.report.inference_time_seconds}
                 inputRes="224 x 224 x 3"
                 primaryDataset="Kaggle Car Damage"
                 secondaryDataset="ValidAuto Detail Split"
-                qualityRating={mergedResponse.quality.rating}
+                qualityRating={apiResponse.quality.rating}
                 softwareVersion="5.0.0"
               />
             </div>
@@ -1167,20 +983,19 @@ export default function AnalysisPage() {
 
           {/* PRINT ONLY: CERTIFICATE VIEW */}
           <CertificateView
-            vehicleInfo={mergedResponse.report.vehicle_info}
-            damageType={mergedResponse.secondary_classification.label}
-            confidence={mergedResponse.secondary_classification.confidence}
-            severity={mergedResponse.report.severity}
-            healthScore={mergedResponse.report.health_score}
-            totalCost={customCosts ? customCosts.total : mergedResponse.report.repair_costs.total}
-            completionDate={customTimeline ? customTimeline.completion_date : mergedResponse.report.repair_timeline.completion_date}
-            timestamp={mergedResponse.report.timestamp}
-            profile={selectedProfile}
+            vehicleInfo={apiResponse.report.vehicle_info}
+            damageType={apiResponse.secondary_classification.label}
+            confidence={apiResponse.secondary_classification.confidence}
+            severity={apiResponse.report.severity}
+            healthScore={apiResponse.report.health_score}
+            totalCost={apiResponse.report.repair_costs.total}
+            completionDate={apiResponse.report.repair_timeline.completion_date}
+            timestamp={apiResponse.report.timestamp}
             images={{
-              original: mergedResponse.images.original,
-              enhanced: mergedResponse.images.enhanced,
-              heatmap: mergedResponse.images.heatmap,
-              localized: mergedResponse.images.localized
+              original: apiResponse.images.original,
+              enhanced: apiResponse.images.enhanced,
+              heatmap: apiResponse.images.heatmap,
+              localized: apiResponse.images.localized
             }}
           />
 
@@ -1188,12 +1003,12 @@ export default function AnalysisPage() {
       )}
 
       {/* IMAGE EDITOR MODAL OVERLAY */}
-      {editingSlotIdx !== null && (
+      {showEditor && imageBase64 && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 backdrop-blur-sm p-4">
           <ImageEditor
-            imageSrc={slots[editingSlotIdx].base64}
+            imageSrc={imageBase64}
             onSave={handleEditorSave}
-            onCancel={() => setEditingSlotIdx(null)}
+            onCancel={() => setShowEditor(false)}
           />
         </div>
       )}
