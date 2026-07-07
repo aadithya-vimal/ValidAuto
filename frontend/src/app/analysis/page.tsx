@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import UploadCard from "@/components/UploadCard";
 import ImagePreview from "@/components/ImagePreview";
 import TimelineTracker from "@/components/TimelineTracker";
@@ -14,7 +14,8 @@ import ImageEditor from "@/components/ImageEditor";
 import { 
   AlertCircle, RefreshCw, Cpu, Download, Volume2, Printer, 
   User, Car, Calendar, Hash, Gauge, Image as ImageIcon, CheckCircle2,
-  Activity, ClipboardCopy, FileText, X, ArrowLeft, Sliders, ShieldAlert
+  Activity, ClipboardCopy, FileText, X, ArrowLeft, Sliders, ShieldAlert,
+  Camera, RotateCw
 } from "lucide-react";
 
 interface LiveAPIResponse {
@@ -122,6 +123,12 @@ export default function AnalysisPage() {
   const [imageBase64, setImageBase64] = useState<string>("");
   const [showEditor, setShowEditor] = useState(false);
 
+  // Camera Integration States
+  const [activeUploadTab, setActiveUploadTab] = useState<"file" | "camera">("file");
+  const [cameraStream, setCameraStream] = useState<MediaStream | null>(null);
+  const [cameraFacingMode, setCameraFacingMode] = useState<"user" | "environment">("environment");
+  const videoRef = useRef<HTMLVideoElement>(null);
+
   // OCR results
   const [ocrResults, setOcrResults] = useState<LiveAPIResponse["ocr"] | null>(null);
 
@@ -191,6 +198,84 @@ export default function AnalysisPage() {
       !isNaN(Number(odometer))
     );
   };
+
+  const startCamera = async (facing: "user" | "environment") => {
+    try {
+      // Access camera stream
+      const constraints = {
+        video: { facingMode: facing, width: { ideal: 1280 }, height: { ideal: 720 } },
+        audio: false
+      };
+      const newStream = await navigator.mediaDevices.getUserMedia(constraints);
+      setCameraStream(newStream);
+      if (videoRef.current) {
+        videoRef.current.srcObject = newStream;
+      }
+    } catch (err) {
+      console.error("Camera access failed:", err);
+      alert("Unable to access camera. Please check your browser permissions.");
+      setActiveUploadTab("file");
+    }
+  };
+
+  const stopCamera = () => {
+    if (cameraStream) {
+      cameraStream.getTracks().forEach((track) => track.stop());
+      setCameraStream(null);
+    }
+  };
+
+  const toggleFacingMode = () => {
+    const nextMode = cameraFacingMode === "user" ? "environment" : "user";
+    setCameraFacingMode(nextMode);
+    if (activeUploadTab === "camera") {
+      startCamera(nextMode);
+    }
+  };
+
+  const handleCapture = () => {
+    const video = videoRef.current;
+    if (!video) return;
+
+    const canvas = document.createElement("canvas");
+    canvas.width = video.videoWidth || 1280;
+    canvas.height = video.videoHeight || 720;
+    const ctx = canvas.getContext("2d");
+
+    if (ctx) {
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+      const dataUrl = canvas.toDataURL("image/jpeg", 0.9);
+      setImageBase64(dataUrl);
+
+      // ConvertCapturedFrame to File
+      fetch(dataUrl)
+        .then((res) => res.blob())
+        .then((blob) => {
+          const file = new File([blob], "camera_capture.jpg", { type: "image/jpeg" });
+          setImageFile(file);
+        });
+
+      stopCamera();
+      setActiveUploadTab("file");
+    }
+  };
+
+  useEffect(() => {
+    if (activeUploadTab === "camera") {
+      startCamera(cameraFacingMode);
+    } else {
+      stopCamera();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeUploadTab]);
+
+  useEffect(() => {
+    return () => {
+      if (cameraStream) {
+        cameraStream.getTracks().forEach((track) => track.stop());
+      }
+    };
+  }, [cameraStream]);
 
   const handleImageSelect = (file: File) => {
     setImageFile(file);
@@ -775,7 +860,88 @@ export default function AnalysisPage() {
                   </div>
                 </div>
               ) : (
-                <UploadCard onImageSelect={handleImageSelect} />
+                <div className="w-full flex flex-col items-center gap-4">
+                  {/* Mode Selector Tabs */}
+                  <div className="flex border-b border-white/5 w-full mb-2">
+                    <button
+                      onClick={() => setActiveUploadTab("file")}
+                      className={`flex-1 pb-2.5 text-xs font-bold uppercase tracking-wider border-b-2 text-center transition-all ${
+                        activeUploadTab === "file"
+                          ? "border-brand-cyan text-brand-cyan"
+                          : "border-transparent text-slate-500 hover:text-slate-300"
+                      }`}
+                    >
+                      Upload Image File
+                    </button>
+                    <button
+                      onClick={() => setActiveUploadTab("camera")}
+                      className={`flex-1 pb-2.5 text-xs font-bold uppercase tracking-wider border-b-2 text-center transition-all ${
+                        activeUploadTab === "camera"
+                          ? "border-brand-cyan text-brand-cyan"
+                          : "border-transparent text-slate-500 hover:text-slate-300"
+                      }`}
+                    >
+                      Use Live Camera
+                    </button>
+                  </div>
+
+                  {activeUploadTab === "file" ? (
+                    <UploadCard onImageSelect={handleImageSelect} />
+                  ) : (
+                    <div className="w-full max-w-md relative rounded-2xl overflow-hidden border border-white/10 bg-slate-950 aspect-video flex flex-col justify-between shadow-2xl shadow-black/80">
+                      <video
+                        ref={videoRef}
+                        autoPlay
+                        playsInline
+                        muted
+                        className="absolute inset-0 w-full h-full object-cover"
+                      />
+
+                      {/* HUD overlay */}
+                      <div className="absolute inset-0 border-[2px] border-brand-cyan/20 pointer-events-none flex items-center justify-center">
+                        <div className="w-[85%] h-[75%] border-2 border-dashed border-brand-cyan/40 rounded-xl relative flex flex-col justify-between p-3">
+                          {/* Corner indicators */}
+                          <div className="absolute top-0 left-0 w-4 h-4 border-t-2 border-l-2 border-brand-cyan" />
+                          <div className="absolute top-0 right-0 w-4 h-4 border-t-2 border-r-2 border-brand-cyan" />
+                          <div className="absolute bottom-0 left-0 w-4 h-4 border-b-2 border-l-2 border-brand-cyan" />
+                          <div className="absolute bottom-0 right-0 w-4 h-4 border-b-2 border-r-2 border-brand-cyan" />
+                          
+                          <div className="absolute inset-0 bg-brand-cyan/5 animate-pulse" />
+                          
+                          {/* Laser scan line */}
+                          <div className="absolute left-0 w-full h-[2px] bg-brand-cyan/85 shadow-[0_0_8px_rgba(6,182,212,0.8)] top-0 animate-pulse" />
+                        </div>
+                      </div>
+
+                      <div className="absolute top-3 left-3 bg-slate-950/85 border border-white/10 px-2 py-1 rounded text-[8px] font-mono text-brand-cyan uppercase tracking-wider flex items-center gap-1 z-10">
+                        <span className="h-1.5 w-1.5 rounded-full bg-brand-cyan animate-ping" />
+                        Scan Mode Active
+                      </div>
+
+                      <div className="absolute bottom-0 inset-x-0 bg-gradient-to-t from-slate-950/90 to-transparent p-4 flex items-center justify-between z-10">
+                        <button
+                          onClick={() => setActiveUploadTab("file")}
+                          className="px-3.5 py-1.5 bg-white/5 border border-white/10 rounded-lg text-[10px] font-bold text-slate-300 hover:text-white"
+                        >
+                          Cancel
+                        </button>
+                        <button
+                          onClick={handleCapture}
+                          className="inline-flex h-12 w-12 items-center justify-center rounded-full bg-brand-cyan hover:bg-brand-cyan/90 text-slate-950 shadow-lg hover:scale-105 transition-all shrink-0 cursor-pointer"
+                        >
+                          <Camera className="h-5.5 w-5.5" />
+                        </button>
+                        <button
+                          onClick={toggleFacingMode}
+                          className="p-2.5 bg-white/5 border border-white/10 rounded-lg text-slate-300 hover:text-white cursor-pointer"
+                          title="Switch Camera"
+                        >
+                          <RotateCw className="h-4 w-4" />
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
               )}
             </div>
 
