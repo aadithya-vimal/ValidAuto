@@ -529,24 +529,114 @@ def get_visual_explanation(category: str, severity: str) -> str:
             "Severe": "High metal deformation and structural joint displacement."
         }
     }
+class SafetyAssessmentEngine:
+    @staticmethod
+    def assess(
+        category: str,
+        severity: str,
+        num_regions: int,
+        coverage_pct: float,
+        is_damaged: bool
+    ) -> dict:
+        if not is_damaged or category == "none":
+            return {
+                "roadworthy": "Safe",
+                "night_driving_safe": "Safe",
+                "highway_safe": "Safe",
+                "rain_driving_safe": "Safe",
+                "long_distance_safe": "Safe",
+                "immediate_repair_required": "No",
+                "reason": "Vehicle safety systems and panel integrity are in normal operating condition."
+            }
+
+        # Check Unsafe conditions (Severe body deformation, shattered glass, multiple damaged regions, or high coverage)
+        is_unsafe = (
+            severity == "Severe" or
+            (category == "glass" and severity in ["Moderate", "Severe"]) or
+            num_regions > 1 or
+            coverage_pct > 3.0
+        )
+
+        if is_unsafe:
+            if severity == "Severe":
+                reason = "Severe structural panel deformation compromises aerodynamic safety and ADAS calibration profiles."
+            elif category == "glass":
+                reason = "Shattered or fractured glass panels compromise cabin pressure, occupant safety, and optical visibility."
+            elif num_regions > 1:
+                reason = f"Multiple damaged regions ({num_regions}) compromise overall vehicle structural integrity."
+            else:
+                reason = f"High area damage coverage ({coverage_pct:.1f}%) exceeds safety-critical boundaries."
+
+            return {
+                "roadworthy": "Unsafe",
+                "night_driving_safe": "Unsafe",
+                "highway_safe": "Unsafe",
+                "rain_driving_safe": "Unsafe",
+                "long_distance_safe": "Unsafe",
+                "immediate_repair_required": "Yes",
+                "reason": reason
+            }
+
+        # Moderate Severity -> Use With Caution
+        if severity == "Moderate":
+            return {
+                "roadworthy": "Use With Caution",
+                "night_driving_safe": "Use With Caution",
+                "highway_safe": "Use With Caution",
+                "rain_driving_safe": "Use With Caution",
+                "long_distance_safe": "Use With Caution",
+                "immediate_repair_required": "Yes",
+                "reason": f"Moderate {category} detected. Highway aerodynamic drag or night lighting glare may affect driving characteristics."
+            }
+
+        # Minor Severity -> Safe but Use With Caution in heavy rain
+        return {
+            "roadworthy": "Safe",
+            "night_driving_safe": "Safe",
+            "highway_safe": "Safe",
+            "rain_driving_safe": "Use With Caution",
+            "long_distance_safe": "Safe",
+            "immediate_repair_required": "No",
+            "reason": f"Minor cosmetic {category} only. Basic driving operations and structural mounts remain fully intact."
+        }
+
 class RepairCostEngine:
     @staticmethod
-    def calculate_cost(category: str, severity: str, is_damaged: bool) -> dict:
+    def calculate_cost(
+        category: str,
+        severity: str,
+        num_regions: int,
+        coverage_pct: float,
+        is_damaged: bool
+    ) -> dict:
         cost_breakdown = {"parts": 0, "labour": 0, "paint": 0, "gst": 0, "total": 0}
         if not is_damaged or category == "none":
             return cost_breakdown
-        
-        cat_rates = REPAIR_DATABASE.get(category, REPAIR_DATABASE["damage"])
-        cost_multiplier = 0.5 if severity == "Minor" else (1.0 if severity == "Moderate" else 2.0)
-        
-        parts_cost = int(cat_rates["parts"] * cost_multiplier)
-        labour_cost = int(cat_rates["labour"] * cost_multiplier)
-        paint_cost = int(cat_rates["paint"] * cost_multiplier)
-        
+
+        database = {
+            "scratch": {"parts": 0, "labour": 2000, "paint": 3000},
+            "dent": {"parts": 1500, "labour": 4000, "paint": 3500},
+            "bumper": {"parts": 9500, "labour": 3000, "paint": 4000},
+            "glass": {"parts": 12000, "labour": 2500, "paint": 0},
+            "damage": {"parts": 4000, "labour": 3000, "paint": 3500}
+        }
+
+        rates = database.get(category, database["damage"])
+        multiplier = 0.8 if severity == "Minor" else (1.5 if severity == "Moderate" else 3.0)
+
+        # Region Factor represents extra labor and parts for multiple panels
+        region_factor = 1.0 + (max(0, num_regions - 1) * 0.25)
+        # Coverage Factor accounts for extra paint prep work
+        coverage_factor = 1.0 + (coverage_pct / 5.0)
+
+        parts_cost = int(rates["parts"] * multiplier * region_factor)
+        labour_cost = int(rates["labour"] * multiplier * region_factor)
+        paint_cost = int(rates["paint"] * multiplier * region_factor * coverage_factor)
+
         subtotal = parts_cost + labour_cost + paint_cost
-        gst_amt = int(subtotal * cat_rates["gst_rate"])
+        gst_amt = int(subtotal * 0.18)
         total_cost = subtotal + gst_amt
-        
+
         return {
             "parts": parts_cost,
             "labour": labour_cost,
@@ -558,45 +648,54 @@ class RepairCostEngine:
 class HealthScoreEngine:
     @staticmethod
     def calculate_score(
-        category: str, 
-        severity: str, 
-        confidence: float, 
-        coverage_pct: float, 
-        roadworthy: str, 
-        night_safe: str, 
-        highway_safe: str,
+        category: str,
+        severity: str,
+        confidence: float,
+        coverage_pct: float,
+        num_regions: int,
+        safety_status: str,
         is_damaged: bool
     ) -> tuple[int, str]:
         if not is_damaged or category == "none":
             return 100, "Vehicle panel integrity is normal. No structural anomalies detected."
-            
-        base_penalties = {"scratch": 10, "dent": 15, "bumper": 20, "glass": 25, "none": 0}
+
+        base_penalties = {"scratch": 10, "dent": 15, "bumper": 20, "glass": 25}
         base_penalty = base_penalties.get(category, 15)
-        
+
         sev_multipliers = {"Minor": 0.5, "Moderate": 1.0, "Severe": 2.0}
         multiplier = sev_multipliers.get(severity, 1.0)
-        
+
         conf_penalty = (1.0 - confidence) * 15
-        coverage_penalty = coverage_pct * 1.5
+        coverage_penalty = coverage_pct * 2.0
+        region_penalty = num_regions * 5.0
+
+        safety_penalty = 0.0
+        if safety_status == "Unsafe":
+            safety_penalty = 25.0
+        elif safety_status == "Use With Caution":
+            safety_penalty = 10.0
+
+        total_deduction = (base_penalty * multiplier) + conf_penalty + coverage_penalty + region_penalty + safety_penalty
         
-        safety_penalty = 0
-        if roadworthy == "No":
-            safety_penalty += 15
-        if night_safe == "No":
-            safety_penalty += 5
-        if highway_safe == "No":
-            safety_penalty += 5
-            
-        total_penalty = (base_penalty * multiplier) + conf_penalty + coverage_penalty + safety_penalty
-        score = max(0, int(100 - total_penalty))
-        
+        # Caps to ensure structural damage never produces medium or high scores
+        score_cap = 100
+        if severity == "Severe":
+            score_cap = 30
+        elif severity == "Moderate":
+            score_cap = 60
+
+        final_score = max(0, min(int(100 - total_deduction), score_cap))
+
         explanation = (
-            f"Base Penalty: {base_penalty * multiplier:.1f} (Category: {category}, Severity: {severity}). "
-            f"Confidence Penalty: {conf_penalty:.1f}. "
-            f"Coverage Penalty: {coverage_penalty:.1f} (Coverage: {coverage_pct}%). "
-            f"Safety Risk Penalty: {safety_penalty:.1f}."
+            f"Arithmetic Breakdown: 100 Base Score - [ "
+            f"Base Penalty: {base_penalty * multiplier:.1f} ({category}/{severity}) - "
+            f"Confidence Margin: {conf_penalty:.1f} - "
+            f"Coverage Load: {coverage_penalty:.1f} ({coverage_pct:.1f}% area) - "
+            f"Region Penalty: {region_penalty:.1f} ({num_regions} panel(s)) - "
+            f"Safety Penalty: {safety_penalty:.1f} ({safety_status}) "
+            f"]. Deducted total: {total_deduction:.1f}. Score Cap active: {score_cap}."
         )
-        return score, explanation
+        return final_score, explanation
 
 @app.post("/analyze")
 async def analyze_vehicle(
@@ -719,34 +818,21 @@ async def analyze_vehicle(
             else:
                 severity = "Moderate"
 
-        # 8. Driving Safety Logic
-        roadworthy = "Yes"
-        night_safe = "Yes"
-        highway_safe = "Yes"
-        long_distance_safe = "Yes"
-        safety_reason = "No anomalies detected. Roadworthiness parameters normal."
-        
-        if is_damaged:
-            if severity == "Severe":
-                roadworthy = "No"
-                night_safe = "No"
-                highway_safe = "No"
-                long_distance_safe = "No"
-                safety_reason = (
-                    f"Severe damage detected on safety-critical components ({secondary_label}). "
-                    "Driving is prohibited until structural components are inspected and ADAS cameras are recalibrated."
-                )
-            elif severity == "Moderate" and secondary_label in ["glass", "bumper"]:
-                roadworthy = "Yes"
-                night_safe = "No" if secondary_label == "glass" else "Yes"
-                highway_safe = "No"
-                long_distance_safe = "No"
-                safety_reason = (
-                    f"Moderate {secondary_label} deformation. Panel could detach under highway drag. "
-                    "Windshield/headlight refraction pattern might degrade night visibility."
-                )
-            else: # Minor cosmetic
-                safety_reason = "Cosmetic damage only. Headlights, bumpers, and structural frame elements remain fully functional."
+        # 8. Safety Assessment Engine
+        safety_res = SafetyAssessmentEngine.assess(
+            category=secondary_label,
+            severity=severity,
+            num_regions=num_regions,
+            coverage_pct=coverage_pct,
+            is_damaged=is_damaged
+        )
+        roadworthy = safety_res["roadworthy"]
+        night_safe = safety_res["night_driving_safe"]
+        highway_safe = safety_res["highway_safe"]
+        rain_driving_safe = safety_res["rain_driving_safe"]
+        long_distance_safe = safety_res["long_distance_safe"]
+        immediate_repair_required = safety_res["immediate_repair_required"]
+        safety_reason = safety_res["reason"]
 
         # 9. Deterministic Health Score Calculation
         health_score, health_explanation = HealthScoreEngine.calculate_score(
@@ -754,9 +840,8 @@ async def analyze_vehicle(
             severity=severity,
             confidence=secondary_conf,
             coverage_pct=coverage_pct,
-            roadworthy=roadworthy,
-            night_safe=night_safe,
-            highway_safe=highway_safe,
+            num_regions=num_regions,
+            safety_status=roadworthy,
             is_damaged=is_damaged
         )
 
@@ -764,6 +849,8 @@ async def analyze_vehicle(
         cost_breakdown = RepairCostEngine.calculate_cost(
             category=secondary_label,
             severity=severity,
+            num_regions=num_regions,
+            coverage_pct=coverage_pct,
             is_damaged=is_damaged
         )
 
@@ -877,7 +964,9 @@ async def analyze_vehicle(
                   "roadworthy": roadworthy,
                   "night_driving_safe": night_safe,
                   "highway_safe": highway_safe,
+                  "rain_driving_safe": rain_driving_safe,
                   "long_distance_safe": long_distance_safe,
+                  "immediate_repair_required": immediate_repair_required,
                   "reason": safety_reason
                 },
                 "localization": {
