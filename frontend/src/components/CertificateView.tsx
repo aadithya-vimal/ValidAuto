@@ -22,7 +22,6 @@ interface CertificateViewProps {
   totalCost: number;
   completionDate: string;
   timestamp: string;
-  profile: string;
   images: {
     original: string;
     enhanced: string;
@@ -40,16 +39,9 @@ export default function CertificateView({
   totalCost,
   completionDate,
   timestamp,
-  profile,
   images
 }: CertificateViewProps) {
   const isDamage = damageType.toLowerCase() !== "none";
-
-  const getProfileTitle = (p: string) => {
-    if (p === "authorized") return "OEM Authorized Center";
-    if (p === "premium") return "Premium Workshop";
-    return "Independent Garage";
-  };
 
   const formatINR = (val: number) => {
     return new Intl.NumberFormat("en-IN", {
@@ -175,10 +167,6 @@ export default function CertificateView({
         <div className="space-y-4">
           <h3 className="font-bold text-sm uppercase text-slate-800 tracking-wider">4. Price Quote & Completion</h3>
           <div className="grid grid-cols-2 gap-4 font-mono">
-            <div>
-              <span className="block text-[9px] text-slate-500 uppercase">Selected Rate Profile</span>
-              <span className="font-bold text-slate-800">{getProfileTitle(profile)}</span>
-            </div>
             <div>
               <span className="block text-[9px] text-slate-500 uppercase">Estimated Total Cost</span>
               <span className="font-bold text-slate-800">{formatINR(totalCost)}</span>
