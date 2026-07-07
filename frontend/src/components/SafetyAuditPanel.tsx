@@ -18,18 +18,25 @@ interface SafetyAuditPanelProps {
 }
 
 export default function SafetyAuditPanel({ safety }: SafetyAuditPanelProps) {
-  const isUnsafe = safety.roadworthy.toLowerCase() === "unsafe";
-  const isCaution = safety.roadworthy.toLowerCase() === "use with caution";
+  const roadworthyVal = safety?.roadworthy || "Safe";
+  const nightVal = safety?.night_driving_safe || "Safe";
+  const highwayVal = safety?.highway_safe || "Safe";
+  const rainVal = safety?.rain_driving_safe || "Safe";
+  const longVal = safety?.long_distance_safe || "Safe";
+  const repairReqVal = safety?.immediate_repair_required || "No";
+  const safetyReason = safety?.reason || "Vehicle safety systems are in normal operating condition.";
+
+  const isUnsafe = roadworthyVal.toLowerCase() === "unsafe";
 
   const getSafetyColor = (val: string) => {
-    const v = val.toLowerCase();
+    const v = (val || "").toLowerCase();
     if (v === "safe") return "text-brand-emerald bg-brand-emerald/10 border-brand-emerald/20";
     if (v === "use with caution") return "text-amber-500 bg-amber-500/10 border-amber-500/20";
     return "text-brand-rose bg-brand-rose/10 border-brand-rose/20";
   };
 
   const getSafetyIcon = (val: string) => {
-    const v = val.toLowerCase();
+    const v = (val || "").toLowerCase();
     if (v === "safe") return <ShieldCheck className="h-4.5 w-4.5 text-brand-emerald shrink-0" />;
     if (v === "use with caution") return <AlertTriangle className="h-4.5 w-4.5 text-amber-500 shrink-0" />;
     return <ShieldAlert className="h-4.5 w-4.5 text-brand-rose shrink-0" />;
@@ -38,37 +45,37 @@ export default function SafetyAuditPanel({ safety }: SafetyAuditPanelProps) {
   const checklist = [
     { 
       label: "Roadworthy Condition", 
-      value: safety.roadworthy, 
-      desc: safety.roadworthy === "Safe" ? "Body panel structural mounts are verified secure." :
-            safety.roadworthy === "Use With Caution" ? "Minor structural mounts require checking." :
+      value: roadworthyVal, 
+      desc: roadworthyVal === "Safe" ? "Body panel structural mounts are verified secure." :
+            roadworthyVal === "Use With Caution" ? "Minor structural mounts require checking." :
             "Structural mounting compromised or safety-critical panels distorted." 
     },
     { 
       label: "Night Driving Suitability", 
-      value: safety.night_driving_safe, 
-      desc: safety.night_driving_safe === "Safe" ? "Headlight refraction indices normal." :
-            safety.night_driving_safe === "Use With Caution" ? "Slight distortion in lens housing." :
+      value: nightVal, 
+      desc: nightVal === "Safe" ? "Headlight refraction indices normal." :
+            nightVal === "Use With Caution" ? "Slight distortion in lens housing." :
             "High glare refraction risk from shattered or damaged glass/optics." 
     },
     { 
       label: "Highway Speed Suitability", 
-      value: safety.highway_safe, 
-      desc: safety.highway_safe === "Safe" ? "Panels remain aerodynamic under wind pressure." :
-            safety.highway_safe === "Use With Caution" ? "High wind resistance may strain loose clips." :
+      value: highwayVal, 
+      desc: highwayVal === "Safe" ? "Panels remain aerodynamic under wind pressure." :
+            highwayVal === "Use With Caution" ? "High wind resistance may strain loose clips." :
             "Air drag could detach unsecured structural components or panel shields." 
     },
     { 
       label: "Rain Driving Suitability", 
-      value: safety.rain_driving_safe, 
-      desc: safety.rain_driving_safe === "Safe" ? "No water ingress risks identified on panel seals." :
-            safety.rain_driving_safe === "Use With Caution" ? "Bare metal scratches exposed to surface rust." :
+      value: rainVal, 
+      desc: rainVal === "Safe" ? "No water ingress risks identified on panel seals." :
+            rainVal === "Use With Caution" ? "Bare metal scratches exposed to surface rust." :
             "Moisture ingress risks in cracked optical casings or panel seal gaps." 
     },
     { 
       label: "Long Distance Endurance", 
-      value: safety.long_distance_safe, 
-      desc: safety.long_distance_safe === "Safe" ? "No immediate structural endurance issues." :
-            safety.long_distance_safe === "Use With Caution" ? "Monitor panel seams for secondary vibration gaps." :
+      value: longVal, 
+      desc: longVal === "Safe" ? "No immediate structural endurance issues." :
+            longVal === "Use With Caution" ? "Monitor panel seams for secondary vibration gaps." :
             "Restricted to local driving only to prevent secondary fracture propagation." 
     }
   ];
@@ -102,22 +109,22 @@ export default function SafetyAuditPanel({ safety }: SafetyAuditPanelProps) {
           <div className="space-y-2">
             <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider print:text-slate-600 block">Assessor Comments</span>
             <p className="text-xs text-slate-300 leading-relaxed print:text-slate-800">
-              {safety.reason}
+              {safetyReason}
             </p>
           </div>
 
           <div className={`mt-4 p-3.5 rounded-xl border flex items-start gap-2 text-xs font-bold ${
-            safety.immediate_repair_required === "Yes"
+            repairReqVal === "Yes"
               ? isUnsafe 
                 ? "bg-brand-rose/10 border-brand-rose/20 text-brand-rose" 
                 : "bg-amber-500/10 border-amber-500/20 text-amber-500"
               : "bg-brand-emerald/10 border-brand-emerald/20 text-brand-emerald"
           }`}>
-            {safety.immediate_repair_required === "Yes" ? <AlertTriangle className="h-5 w-5 shrink-0 mt-0.5" /> : <ShieldCheck className="h-5 w-5 shrink-0 mt-0.5" />}
+            {repairReqVal === "Yes" ? <AlertTriangle className="h-5 w-5 shrink-0 mt-0.5" /> : <ShieldCheck className="h-5 w-5 shrink-0 mt-0.5" />}
             <div>
               <span className="block uppercase text-[10px]">Immediate Repair Action</span>
               <p className="font-normal text-slate-300 print:text-slate-800 mt-1">
-                {safety.immediate_repair_required === "Yes"
+                {repairReqVal === "Yes"
                   ? isUnsafe
                     ? "Mandatory: Safety components compromised. Mandatory structural workshop scheduling required."
                     : "Recommended: Moderate issues flagged. Schedule repair at early convenience."
