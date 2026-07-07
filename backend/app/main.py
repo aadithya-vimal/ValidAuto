@@ -529,9 +529,74 @@ def get_visual_explanation(category: str, severity: str) -> str:
             "Severe": "High metal deformation and structural joint displacement."
         }
     }
-    sev_key = severity if severity in ["Minor", "Moderate", "Severe"] else "Moderate"
-    cat_key = category if category in explanations else "damage"
-    return f"The classifier detected visual features consistent with {category} ({severity} severity), including {explanations[cat_key][sev_key]}."
+class RepairCostEngine:
+    @staticmethod
+    def calculate_cost(category: str, severity: str, is_damaged: bool) -> dict:
+        cost_breakdown = {"parts": 0, "labour": 0, "paint": 0, "gst": 0, "total": 0}
+        if not is_damaged or category == "none":
+            return cost_breakdown
+        
+        cat_rates = REPAIR_DATABASE.get(category, REPAIR_DATABASE["damage"])
+        cost_multiplier = 0.5 if severity == "Minor" else (1.0 if severity == "Moderate" else 2.0)
+        
+        parts_cost = int(cat_rates["parts"] * cost_multiplier)
+        labour_cost = int(cat_rates["labour"] * cost_multiplier)
+        paint_cost = int(cat_rates["paint"] * cost_multiplier)
+        
+        subtotal = parts_cost + labour_cost + paint_cost
+        gst_amt = int(subtotal * cat_rates["gst_rate"])
+        total_cost = subtotal + gst_amt
+        
+        return {
+            "parts": parts_cost,
+            "labour": labour_cost,
+            "paint": paint_cost,
+            "gst": gst_amt,
+            "total": total_cost
+        }
+
+class HealthScoreEngine:
+    @staticmethod
+    def calculate_score(
+        category: str, 
+        severity: str, 
+        confidence: float, 
+        coverage_pct: float, 
+        roadworthy: str, 
+        night_safe: str, 
+        highway_safe: str,
+        is_damaged: bool
+    ) -> tuple[int, str]:
+        if not is_damaged or category == "none":
+            return 100, "Vehicle panel integrity is normal. No structural anomalies detected."
+            
+        base_penalties = {"scratch": 10, "dent": 15, "bumper": 20, "glass": 25, "none": 0}
+        base_penalty = base_penalties.get(category, 15)
+        
+        sev_multipliers = {"Minor": 0.5, "Moderate": 1.0, "Severe": 2.0}
+        multiplier = sev_multipliers.get(severity, 1.0)
+        
+        conf_penalty = (1.0 - confidence) * 15
+        coverage_penalty = coverage_pct * 1.5
+        
+        safety_penalty = 0
+        if roadworthy == "No":
+            safety_penalty += 15
+        if night_safe == "No":
+            safety_penalty += 5
+        if highway_safe == "No":
+            safety_penalty += 5
+            
+        total_penalty = (base_penalty * multiplier) + conf_penalty + coverage_penalty + safety_penalty
+        score = max(0, int(100 - total_penalty))
+        
+        explanation = (
+            f"Base Penalty: {base_penalty * multiplier:.1f} (Category: {category}, Severity: {severity}). "
+            f"Confidence Penalty: {conf_penalty:.1f}. "
+            f"Coverage Penalty: {coverage_penalty:.1f} (Coverage: {coverage_pct}%). "
+            f"Safety Risk Penalty: {safety_penalty:.1f}."
+        )
+        return score, explanation
 
 @app.post("/analyze")
 async def analyze_vehicle(
@@ -684,58 +749,23 @@ async def analyze_vehicle(
                 safety_reason = "Cosmetic damage only. Headlights, bumpers, and structural frame elements remain fully functional."
 
         # 9. Deterministic Health Score Calculation
-        health_score = 100
-        health_explanation = "Vehicle panel integrity is normal. No structural anomalies detected."
-        
-        if is_damaged:
-            base_penalties = {"scratch": 10, "dent": 15, "bumper": 20, "glass": 25, "none": 0}
-            base_penalty = base_penalties.get(secondary_label, 15)
-            
-            sev_multipliers = {"Minor": 0.5, "Moderate": 1.0, "Severe": 2.0}
-            multiplier = sev_multipliers.get(severity, 1.0)
-            
-            conf_penalty = (1.0 - secondary_conf) * 15
-            coverage_penalty = coverage_pct * 1.5
-            
-            safety_penalty = 0
-            if roadworthy == "No":
-                safety_penalty += 15
-            if night_safe == "No":
-                safety_penalty += 5
-            if highway_safe == "No":
-                safety_penalty += 5
-                
-            total_penalty = (base_penalty * multiplier) + conf_penalty + coverage_penalty + safety_penalty
-            health_score = max(0, int(100 - total_penalty))
-            
-            health_explanation = (
-                f"Base Penalty: {base_penalty * multiplier:.1f} (Category: {secondary_label}, Severity: {severity}). "
-                f"Confidence Penalty: {conf_penalty:.1f}. "
-                f"Coverage Penalty: {coverage_penalty:.1f} (Coverage: {coverage_pct}%). "
-                f"Safety Risk Penalty: {safety_penalty:.1f}."
-            )
+        health_score, health_explanation = HealthScoreEngine.calculate_score(
+            category=secondary_label,
+            severity=severity,
+            confidence=secondary_conf,
+            coverage_pct=coverage_pct,
+            roadworthy=roadworthy,
+            night_safe=night_safe,
+            highway_safe=highway_safe,
+            is_damaged=is_damaged
+        )
 
         # 10. Repair Cost Engine
-        cost_breakdown = {"parts": 0, "labour": 0, "paint": 0, "gst": 0, "total": 0}
-        if is_damaged:
-            cat_rates = REPAIR_DATABASE.get(secondary_label, REPAIR_DATABASE["damage"])
-            cost_multiplier = 0.5 if severity == "Minor" else (1.0 if severity == "Moderate" else 2.0)
-            
-            parts_cost = int(cat_rates["parts"] * cost_multiplier)
-            labour_cost = int(cat_rates["labour"] * cost_multiplier)
-            paint_cost = int(cat_rates["paint"] * cost_multiplier)
-            
-            subtotal = parts_cost + labour_cost + paint_cost
-            gst_amt = int(subtotal * cat_rates["gst_rate"])
-            total_cost = subtotal + gst_amt
-            
-            cost_breakdown = {
-                "parts": parts_cost,
-                "labour": labour_cost,
-                "paint": paint_cost,
-                "gst": gst_amt,
-                "total": total_cost
-            }
+        cost_breakdown = RepairCostEngine.calculate_cost(
+            category=secondary_label,
+            severity=severity,
+            is_damaged=is_damaged
+        )
 
         # 11. Repair Time Engine
         working_hours = 0
