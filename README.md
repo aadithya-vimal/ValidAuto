@@ -221,21 +221,23 @@ python app/train_secondary.py   # Trains Stage 2 model
 To present this project to your examiners, follow this workflow to demonstrate each technical component:
 
 ### 1. Introduction & Abstract (Landing Page)
-* **What to show**: Open `http://localhost:3000`. Point out the landing page, the glassmorphic styling, and the decoupled design of the application.
-* **Examiner Talking Point**: *"Our system is designed to automate vehicle insurance claims and fleet maintenance by replacing manual inspections with a two-stage deep learning pipeline."*
+<img width="1917" height="928" alt="image" src="https://github.com/user-attachments/assets/2bf21995-452a-4a81-822f-7fe962bda4f3" />
+
 
 ### 2. Live Camera Scanner (Interactive Capture)
-* **What to show**: Click **"Start Visual Scan"**, then toggle the camera scanner tab. Show the browser capture stream utilizing the user's webcam. Frame a mock vehicle picture and click capture.
-* **Examiner Talking Point**: *"We integrated real-time video capture using WebRTC, allowing inspector agents to snap high-resolution panel frames directly on-site."*
+<img width="1917" height="927" alt="image" src="https://github.com/user-attachments/assets/c89aba97-eefe-40c9-b405-fb9a8b44580a" />
+
 
 ### 3. Pipeline Execution (Checklist Loader)
-* **What to show**: Upload an image. Point out the animated loading checklist.
-* **Examiner Talking Point**: *"Before passing the frame to our models, we run OpenCV preprocessing to analyze image quality (checking for blur, low light, or extreme exposure) and automatically apply CLAHE and sharpening. The system also runs OCR in parallel to capture vehicle metadata."*
+<img width="507" height="493" alt="image" src="https://github.com/user-attachments/assets/d40d6082-2b94-44ed-9bf5-0520852bb5d1" />
 
 ### 4. Explainable AI & Report Generation (Results Page)
-* **What to show**: Scroll down to the HUD dashboard displaying the primary class, confidence rating, severity rating, and the Grad-CAM heatmap.
-* **Examiner Talking Point**: *"We address the black-box nature of deep neural networks by using Grad-CAM. This highlights the exact pixels that influenced the model's prediction. The system then generates a detailed Indian Rupee (₹)-based cost breakdown, insurance document checklists, and safety advisories."*
+<img width="1917" height="927" alt="image" src="https://github.com/user-attachments/assets/22c7c77e-4e2d-4907-a491-ca8d086876ae" />
+<img width="1917" height="930" alt="image" src="https://github.com/user-attachments/assets/4e34968b-5e24-4177-9896-4dd174858a9c" />
+<img width="1917" height="928" alt="image" src="https://github.com/user-attachments/assets/1225beec-0ac2-4301-8d07-5047aa46435a" />
+<img width="1917" height="930" alt="image" src="https://github.com/user-attachments/assets/0d61ed90-d01d-4edd-b5be-b484706cd338" />
+
 
 ### 5. Historical Audit Logs (History & Analytics Dashboard)
-* **What to show**: Navigate to the **History** tab to reload past reports, and the **Analytics** tab to view overall fleet metrics.
-* **Examiner Talking Point**: *"All inspections are saved to a local JSON document database on the backend and cached in the browser's localStorage. This architecture supports offline capabilities and provides analytics on repair patterns."*
+<img width="1917" height="930" alt="image" src="https://github.com/user-attachments/assets/59753d02-d7eb-4d68-961e-e186f9da5716" />
+
