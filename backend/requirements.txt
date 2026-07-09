@@ -1,6 +1,9 @@
 fastapi
-uvicorn
-python-multipart
-tensorflow
-pillow
+uvicorn[standard]
+tensorflow==2.20.0
+keras
 numpy
+opencv-python-headless
+pillow
+python-multipart
+scikit-learn
