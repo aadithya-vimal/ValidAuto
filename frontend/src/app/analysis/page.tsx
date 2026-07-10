@@ -46,6 +46,16 @@ interface LiveAPIResponse {
     label: string;
     confidence: number;
   };
+  health_details?: {
+    overall_category: string;
+    severity: string;
+    confidence: number;
+    coverage_pct: number;
+    num_regions: number;
+    safety_status: string;
+    affected_subsystems: string[];
+    subsystem_scores: Record<string, number>;
+  };
   report: {
     vehicle_info: {
       owner_name: string;
@@ -1168,6 +1178,45 @@ export default function AnalysisPage() {
                     {apiResponse.report.health_explanation}
                   </p>
                 </div>
+
+                {apiResponse.health_details && (
+                  <div className="border-t border-white/5 pt-3 space-y-3 text-[10px] font-mono text-slate-300">
+                    <span className="block text-[8px] text-slate-500 uppercase font-bold">Subsystem Health:</span>
+                    <div className="grid grid-cols-2 gap-2">
+                      {[
+                        ["body_panel", "Body Panel"],
+                        ["windshield_glass", "Glass"],
+                        ["headlight", "Headlight"],
+                        ["tail_light", "Tail Light"],
+                        ["side_mirror", "Mirror"],
+                        ["tire_wheel", "Tire/Wheel"],
+                        ["bumper", "Bumper"],
+                        ["paint_condition", "Paint"],
+                        ["panel_alignment", "Alignment"],
+                        ["wiper_blade", "Wipers"],
+                        ["electrical_marker", "Electrical"],
+                      ].map(([key, label]) => (
+                        <div key={key} className="rounded-lg border border-white/5 bg-black/20 px-2 py-2">
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="text-slate-400">{label}</span>
+                            <span className="font-bold text-white">{apiResponse.health_details?.subsystem_scores?.[key] ?? 0}/100</span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                    <div className="rounded-lg border border-white/5 bg-black/20 p-3 space-y-1">
+                      <div className="flex flex-wrap gap-x-4 gap-y-1">
+                        <span>Damaged Area: {apiResponse.health_details.affected_subsystems.join(", ") || "none"}</span>
+                        <span>Coverage: {apiResponse.health_details.coverage_pct.toFixed(1)}%</span>
+                      </div>
+                      <div className="flex flex-wrap gap-x-4 gap-y-1">
+                        <span>Confidence: {(apiResponse.health_details.confidence * 100).toFixed(1)}%</span>
+                        <span>Regions: {apiResponse.health_details.num_regions}</span>
+                        <span>Safety: {apiResponse.health_details.safety_status}</span>
+                      </div>
+                    </div>
+                  </div>
+                )}
               </div>
 
               {/* System health node specs */}
