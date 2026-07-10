@@ -1,6 +1,10 @@
 import os
 import time
 import datetime
+import asyncio
+import concurrent.futures
+import functools
+import hashlib
 import numpy as np
 import cv2
 import base64
@@ -11,6 +15,164 @@ from fastapi import FastAPI, UploadFile, File, Form, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 import tensorflow as tf
 from app.ocr import perform_ocr
+
+try:
+    from scipy import stats as _scipy_stats
+    SCIPY_AVAILABLE = True
+except ImportError:
+    SCIPY_AVAILABLE = False
+
+# ============================================================================
+#  Module-level constants for the multi-subsystem pipeline
+# ============================================================================
+
+# 11 subsystems (weights sum to 1.00). Safety impact: H=high, M=moderate, L=low.
+SUBSYSTEM_WEIGHTS = {
+    "body_panel":       0.20,
+    "windshield_glass": 0.15,
+    "headlight":        0.08,
+    "tail_light":       0.06,
+    "side_mirror":      0.06,
+    "tire_wheel":       0.08,
+    "bumper":           0.10,
+    "paint_condition":  0.08,
+    "panel_alignment":  0.07,
+    "wiper_blade":      0.04,
+    "electrical_marker":0.08,
+}
+
+# Soft caps on the OVERALL health score only — never on per-subsystem scores.
+SEVERE_CAP = 55
+SEVERE_FLOOR = 35
+MODERATE_CAP = 78
+MODERATE_FLOOR = 65
+
+# Subsystems that affect roadworthiness if their score drops below 50.
+SAFETY_CRITICAL_SUBSYSTEMS = {
+    "windshield_glass", "headlight", "tail_light",
+    "tire_wheel", "bumper", "electrical_marker",
+}
+
+# Per-subsystem cost tables in INR. Tuples are
+# (parts_min, parts_max, labour_min, labour_max, paint_min, paint_max).
+COST_TABLES = {
+    "body_panel": {
+        "Minor":    (0, 1500, 1000, 2500, 1500, 3500),
+        "Moderate": (1500, 4000, 3000, 6000, 3000, 6000),
+        "Severe":   (4500, 12000, 6000, 14000, 5000, 10000),
+    },
+    "windshield_glass": {
+        "Minor":    (3500, 6000, 1500, 2500, 0, 0),
+        "Moderate": (8000, 12000, 2000, 3000, 0, 0),
+        "Severe":   (14000, 22000, 2500, 4000, 0, 0),
+    },
+    "headlight": {
+        "Minor":    (2500, 4500, 800, 1500, 0, 0),
+        "Moderate": (4500, 7500, 1200, 2000, 0, 0),
+        "Severe":   (6500, 12000, 1500, 3000, 0, 0),
+    },
+    "tail_light": {
+        "Minor":    (2000, 3500, 800, 1500, 0, 0),
+        "Moderate": (3500, 6000, 1200, 2000, 0, 0),
+        "Severe":   (5500, 9500, 1500, 3000, 0, 0),
+    },
+    "side_mirror": {
+        "Minor":    (1500, 3000, 500, 1000, 0, 0),
+        "Moderate": (2500, 4500, 700, 1500, 0, 600),
+        "Severe":   (3500, 6500, 1000, 2000, 600, 1200),
+    },
+    "tire_wheel": {
+        "Minor":    (3500, 5500, 800, 1200, 0, 0),
+        "Moderate": (6500, 9500, 1000, 1800, 0, 0),
+        "Severe":   (8500, 15000, 1200, 2500, 0, 0),
+    },
+    "bumper": {
+        "Minor":    (3500, 6000, 1500, 2500, 2000, 3500),
+        "Moderate": (6500, 10500, 2500, 4000, 3500, 5500),
+        "Severe":   (9000, 16000, 3000, 5500, 4500, 7500),
+    },
+    "paint_condition": {
+        "Minor":    (0, 0, 800, 1500, 3500, 6000),
+        "Moderate": (0, 0, 1500, 2500, 6000, 10000),
+        "Severe":   (0, 0, 2500, 4500, 9500, 16000),
+    },
+    "panel_alignment": {
+        "Minor":    (0, 0, 2500, 4500, 1500, 3000),
+        "Moderate": (0, 0, 4500, 7500, 2500, 5000),
+        "Severe":   (0, 0, 6000, 11000, 3000, 6500),
+    },
+    "wiper_blade": {
+        "Minor":    (500, 1000, 200, 400, 0, 0),
+        "Moderate": (800, 1400, 300, 500, 0, 0),
+        "Severe":   (900, 1500, 300, 500, 0, 0),
+    },
+    "electrical_marker": {
+        "Minor":    (0, 0, 800, 1500, 0, 0),
+        "Moderate": (0, 0, 1000, 2000, 0, 0),
+        "Severe":   (0, 0, 1200, 3000, 0, 0),
+    },
+}
+
+# Parallel executor for CV heuristics (CPU-bound, so 4 workers is enough).
+_INFERENCE_EXECUTOR = concurrent.futures.ThreadPoolExecutor(
+    max_workers=4, thread_name_prefix="va-cv"
+)
+
+# Map of secondary classification labels to display names (kept for back-compat).
+SECONDARY_LABEL_MAP = ["bumper", "dent", "glass", "scratch"]
+
+
+def _entropy_from_hist(hist: np.ndarray) -> float:
+    """Shannon entropy of a normalized histogram."""
+    if SCIPY_AVAILABLE:
+        # scipy.stats.entropy expects probabilities.
+        h = hist.astype(np.float64)
+        s = h.sum()
+        if s <= 0:
+            return 0.0
+        return float(_scipy_stats.entropy(h / s))
+    # Fallback: hand-rolled Shannon entropy if scipy is not available.
+    h = hist.astype(np.float64)
+    s = h.sum()
+    if s <= 0:
+        return 0.0
+    p = h / s
+    p = p[p > 0]
+    return float(-np.sum(p * np.log(p)))
+
+
+def cached_quality_metrics(img_np: np.ndarray) -> dict:
+    """LRU-cached wrapper around calculate_quality_metrics, keyed on bytes.
+
+    Re-running the gate on the same image is essentially free after the first
+    call. We hash the image bytes (not the np array) so the cache key is
+    stable across requests.
+    """
+    raw = img_np.tobytes()
+    key = hashlib.md5(raw).hexdigest() + f"|{img_np.shape[0]}x{img_np.shape[1]}"
+    return _quality_cache.get(key) or _quality_cache.setdefault(
+        key, calculate_quality_metrics(img_np)
+    )
+
+
+_quality_cache: dict = {}
+
+
+def get_secondary_model() -> "tf.keras.Model | None":
+    """Lazy loader for the secondary classifier. Returns None if file is missing.
+
+    Backed by lru_cache so the model is loaded at most once per process.
+    """
+    return _secondary_model_singleton()
+
+
+@functools.lru_cache(maxsize=1)
+def _secondary_model_singleton() -> "tf.keras.Model | None":
+    if not os.path.exists(SECONDARY_MODEL_PATH):
+        print(f"[Info] Secondary model not present at {SECONDARY_MODEL_PATH}.")
+        return None
+    print(f"[first-use] Loading secondary damage model from {SECONDARY_MODEL_PATH}...")
+    return tf.keras.models.load_model(SECONDARY_MODEL_PATH)
 
 app = FastAPI(
     title="ValidAuto Inspection API",
@@ -659,47 +821,128 @@ class HealthScoreEngine:
         num_regions: int,
         safety_status: str,
         is_damaged: bool
-    ) -> tuple[int, str]:
+    ) -> tuple[int, str, dict]:
+        subsystem_scores = {
+            "body_panel": 100,
+            "windshield_glass": 100,
+            "headlight": 100,
+            "tail_light": 100,
+            "side_mirror": 100,
+            "tire_wheel": 100,
+            "bumper": 100,
+            "paint_condition": 100,
+            "panel_alignment": 100,
+            "wiper_blade": 100,
+            "electrical_marker": 100,
+        }
+
         if not is_damaged or category == "none":
-            return 100, "Vehicle panel integrity is normal. No structural anomalies detected."
+            details = {
+                "overall_category": "none",
+                "severity": "None",
+                "confidence": confidence,
+                "coverage_pct": coverage_pct,
+                "num_regions": num_regions,
+                "safety_status": safety_status,
+                "subsystem_scores": subsystem_scores,
+                "affected_subsystems": [],
+            }
+            return 100, "Vehicle panel integrity is normal. No structural anomalies detected.", details
 
-        base_penalties = {"scratch": 10, "dent": 15, "bumper": 20, "glass": 25}
-        base_penalty = base_penalties.get(category, 15)
+        category_map = {
+            "scratch": ["paint_condition", "body_panel", "side_mirror"],
+            "dent": ["body_panel", "panel_alignment", "bumper"],
+            "bumper": ["bumper", "panel_alignment", "electrical_marker"],
+            "glass": ["windshield_glass", "electrical_marker", "wiper_blade"],
+        }
+        affected_subsystems = category_map.get(category, ["body_panel"])
 
-        sev_multipliers = {"Minor": 0.5, "Moderate": 1.0, "Severe": 2.0}
-        multiplier = sev_multipliers.get(severity, 1.0)
+        severity_targets = {
+            "Minor": 82,
+            "Moderate": 62,
+            "Severe": 35,
+        }
+        base_target = severity_targets.get(severity, 62)
 
-        conf_penalty = (1.0 - confidence) * 15
-        coverage_penalty = coverage_pct * 2.0
-        region_penalty = num_regions * 5.0
+        # Core weighted penalties
+        severity_penalty = 100 - base_target
+        confidence_penalty = max(0.0, (1.0 - confidence) * 18.0)
+        coverage_penalty = min(18.0, coverage_pct * 1.6)
+        region_penalty = min(12.0, max(0, num_regions - 1) * 3.5)
 
         safety_penalty = 0.0
         if safety_status == "Unsafe":
-            safety_penalty = 25.0
+            safety_penalty = 18.0
         elif safety_status == "Use With Caution":
-            safety_penalty = 10.0
+            safety_penalty = 8.0
 
-        total_deduction = (base_penalty * multiplier) + conf_penalty + coverage_penalty + region_penalty + safety_penalty
-        
-        # Caps to ensure structural damage never produces medium or high scores
-        score_cap = 100
-        if severity == "Severe":
-            score_cap = 30
-        elif severity == "Moderate":
-            score_cap = 60
+        # Build subsystem scores so the UI can show more than a single number.
+        for subsystem, weight in SUBSYSTEM_WEIGHTS.items():
+            score = 100.0
+            if subsystem in affected_subsystems:
+                score = base_target
+                if subsystem == "paint_condition":
+                    score -= 4 if severity == "Minor" else 8 if severity == "Moderate" else 14
+                elif subsystem == "panel_alignment":
+                    score -= 2 if severity == "Minor" else 6 if severity == "Moderate" else 12
+                elif subsystem == "electrical_marker":
+                    score -= 10 if severity == "Severe" else 4 if severity == "Moderate" else 1
+                elif subsystem == "windshield_glass":
+                    score -= 8 if severity == "Severe" else 4 if severity == "Moderate" else 1
+                elif subsystem == "bumper":
+                    score -= 6 if severity == "Severe" else 3 if severity == "Moderate" else 1
+                else:
+                    score -= 0
+            if subsystem in SAFETY_CRITICAL_SUBSYSTEMS and severity == "Severe":
+                score -= 8
+            if subsystem == "body_panel":
+                score -= coverage_penalty * 0.7
+            if subsystem == "paint_condition":
+                score -= coverage_penalty * 0.9
+            if subsystem == "panel_alignment":
+                score -= region_penalty * 0.8
+            if subsystem in {"windshield_glass", "electrical_marker"} and safety_status == "Unsafe":
+                score -= 8
+            subsystem_scores[subsystem] = int(max(0, min(100, round(score))))
 
-        final_score = max(0, min(int(100 - total_deduction), score_cap))
+        weighted_sum = 0.0
+        for subsystem, weight in SUBSYSTEM_WEIGHTS.items():
+            weighted_sum += subsystem_scores[subsystem] * weight
+
+        total_deduction = severity_penalty + confidence_penalty + coverage_penalty + region_penalty + safety_penalty
+        combined_score = weighted_sum - (confidence_penalty * 0.35) - (coverage_penalty * 0.55) - (region_penalty * 0.45) - safety_penalty
+
+        # Healthy cars should reach 100 only when they are genuinely whole.
+        if category == "none":
+            final_score = 100
+        else:
+            final_score = int(max(1, min(99, round(combined_score))))
+            if severity == "Minor":
+                final_score = max(final_score, 70)
+            elif severity == "Moderate":
+                final_score = min(final_score, 89)
+            else:
+                final_score = min(final_score, 69)
 
         explanation = (
-            f"Arithmetic Breakdown: 100 Base Score - [ "
-            f"Base Penalty: {base_penalty * multiplier:.1f} ({category}/{severity}) - "
-            f"Confidence Margin: {conf_penalty:.1f} - "
-            f"Coverage Load: {coverage_penalty:.1f} ({coverage_pct:.1f}% area) - "
-            f"Region Penalty: {region_penalty:.1f} ({num_regions} panel(s)) - "
-            f"Safety Penalty: {safety_penalty:.1f} ({safety_status}) "
-            f"]. Deducted total: {total_deduction:.1f}. Score Cap active: {score_cap}."
+            f"Weighted subsystem score: {weighted_sum:.1f}. "
+            f"Confidence deduction: {confidence_penalty:.1f}. "
+            f"Coverage deduction: {coverage_penalty:.1f} ({coverage_pct:.1f}% area). "
+            f"Region deduction: {region_penalty:.1f} ({num_regions} region(s)). "
+            f"Safety deduction: {safety_penalty:.1f} ({safety_status}). "
+            f"Affected subsystems: {', '.join(affected_subsystems)}."
         )
-        return final_score, explanation
+        details = {
+            "overall_category": category,
+            "severity": severity,
+            "confidence": confidence,
+            "coverage_pct": coverage_pct,
+            "num_regions": num_regions,
+            "safety_status": safety_status,
+            "subsystem_scores": subsystem_scores,
+            "affected_subsystems": affected_subsystems,
+        }
+        return final_score, explanation, details
 
 @app.post("/analyze")
 async def analyze_vehicle(
@@ -839,7 +1082,7 @@ async def analyze_vehicle(
         safety_reason = safety_res["reason"]
 
         # 9. Deterministic Health Score Calculation
-        health_score, health_explanation = HealthScoreEngine.calculate_score(
+        health_score, health_explanation, health_details = HealthScoreEngine.calculate_score(
             category=secondary_label,
             severity=severity,
             confidence=secondary_conf,
@@ -954,6 +1197,7 @@ async def analyze_vehicle(
                 },
                 "health_score": health_score,
                 "health_explanation": health_explanation,
+                "health_details": health_details,
                 "severity": severity,
                 "repair_costs": cost_breakdown,
                 "repair_timeline": {
