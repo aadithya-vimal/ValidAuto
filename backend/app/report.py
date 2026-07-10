@@ -169,6 +169,56 @@ def get_insurance_summary(damage_type: str, severity: str) -> str:
         
     return "Significant repair costs anticipated. It is recommended to contact your insurance representative to submit a comprehensive or collision claim. Attach this automated inspection report and original damage photos as evidence."
 
+def get_itemized_repair_items(damage_type: str, severity: str) -> list:
+    """
+    Builds a compact itemized breakdown for the printable report and UI.
+    """
+    resolved = resolve_type(damage_type)
+    templates = {
+        "scratch": [
+            ("paint_condition", "Clear coat and top-layer paint abrasion"),
+            ("body_panel", "Visible surface scoring on exposed panel"),
+            ("side_mirror", "Mirror housing scuffing or edge scrape"),
+        ],
+        "dent": [
+            ("body_panel", "Sheet metal indentation / panel deformation"),
+            ("panel_alignment", "Door / quarter panel seam misalignment"),
+            ("bumper", "Localized bumper push-in or clip stress"),
+        ],
+        "damage": [
+            ("body_panel", "General exterior body panel damage"),
+            ("paint_condition", "Paint loss, abrasion, or finish degradation"),
+            ("panel_alignment", "Panel seam or mounting misalignment"),
+        ],
+        "none": []
+    }
+    parts = templates.get(resolved, templates["damage"])
+    if not parts:
+        return []
+
+    severity_mult = {"Low": 0.8, "Moderate": 1.5, "High": 3.0}.get(severity, 1.0)
+    base_costs = {
+        "paint_condition": (0, 1400, 2400),
+        "body_panel": (0, 900, 800),
+        "side_mirror": (0, 400, 300),
+        "panel_alignment": (0, 1200, 1000),
+        "bumper": (9500, 3000, 4000),
+    }
+    items = []
+    for part_name, description in parts:
+        parts_cost, labour_cost, paint_cost = base_costs.get(part_name, (1200, 1800, 1200))
+        subtotal = int((parts_cost + labour_cost + paint_cost) * severity_mult)
+        items.append({
+            "part": part_name,
+            "damage": description,
+            "severity": severity,
+            "parts": int(parts_cost * severity_mult),
+            "labour": int(labour_cost * severity_mult),
+            "paint": int(paint_cost * severity_mult),
+            "subtotal": subtotal,
+        })
+    return items
+
 def generate_report_dict(damage_type: str, severity: str, confidence: float) -> dict:
     """
     Main generator combining all template helpers into a clean, comprehensive diagnostic dictionary.
@@ -202,6 +252,7 @@ def generate_report_dict(damage_type: str, severity: str, confidence: float) -> 
     else: # general damage
         min_cost = 20000 if severity == "High" else (8000 if severity == "Moderate" else 3500)
         max_cost = 75000 if severity == "High" else (20000 if severity == "Moderate" else 8000)
+    repair_items = get_itemized_repair_items(damage_type, severity)
 
     # Priority
     priority = "Low" if severity == "Low" else ("Medium" if severity == "Moderate" else ("High" if severity == "High" else "Low"))
@@ -271,6 +322,7 @@ def generate_report_dict(damage_type: str, severity: str, confidence: float) -> 
         "health_score": health_score,
         "min_cost": min_cost,
         "max_cost": max_cost,
+        "repair_items": repair_items,
         "priority": priority,
         "driving_risk": driving_risk,
         "insurance_eligibility": insurance_eligibility,
