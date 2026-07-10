@@ -20,6 +20,15 @@ interface CertificateViewProps {
   severity: string;
   healthScore: number;
   totalCost: number;
+  repairItems?: Array<{
+    part: string;
+    damage: string;
+    severity: string;
+    parts: number;
+    labour: number;
+    paint: number;
+    subtotal: number;
+  }>;
   completionDate: string;
   timestamp: string;
   images: {
@@ -37,6 +46,7 @@ export default function CertificateView({
   severity,
   healthScore,
   totalCost,
+  repairItems = [],
   completionDate,
   timestamp,
   images
@@ -177,6 +187,34 @@ export default function CertificateView({
             </div>
           </div>
         </div>
+      </div>
+
+      {/* Itemized Repair Breakdown */}
+      <div className="space-y-4 border-b border-slate-200 pb-6 text-xs">
+        <h3 className="font-bold text-sm uppercase text-slate-800 tracking-wider">4. Itemized Damage & Repair Cost Breakdown</h3>
+        {repairItems.length === 0 ? (
+          <p className="font-mono text-slate-500">No itemized damage breakdown was supplied for this inspection.</p>
+        ) : (
+          <div className="space-y-3">
+            {repairItems.map((item) => (
+              <div key={item.part} className="rounded-lg border border-slate-200 p-3 bg-slate-50">
+                <div className="flex items-center justify-between gap-4">
+                  <div>
+                    <p className="font-bold text-slate-900 capitalize">{item.part.replace(/_/g, " ")}</p>
+                    <p className="text-[10px] text-slate-600 mt-0.5">{item.damage}</p>
+                  </div>
+                  <span className="text-[10px] uppercase font-bold text-slate-700 border border-slate-300 rounded-full px-2 py-0.5">{item.severity}</span>
+                </div>
+                <div className="mt-3 grid grid-cols-4 gap-3 font-mono">
+                  <div><span className="block text-[9px] text-slate-500 uppercase">Parts</span><span className="font-bold text-slate-900">{formatINR(item.parts)}</span></div>
+                  <div><span className="block text-[9px] text-slate-500 uppercase">Labour</span><span className="font-bold text-slate-900">{formatINR(item.labour)}</span></div>
+                  <div><span className="block text-[9px] text-slate-500 uppercase">Paint</span><span className="font-bold text-slate-900">{formatINR(item.paint)}</span></div>
+                  <div><span className="block text-[9px] text-slate-500 uppercase">Subtotal</span><span className="font-bold text-slate-900">{formatINR(item.subtotal)}</span></div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* Signature Area */}
