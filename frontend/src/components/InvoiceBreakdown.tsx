@@ -48,62 +48,68 @@ export default function InvoiceBreakdown({ costs, timeline }: InvoiceBreakdownPr
         </h4>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
+      <div className="space-y-5">
         {/* Cost Invoice Table */}
-        <div className="lg:col-span-7 space-y-2 font-mono text-xs">
-          <div className="space-y-1.5 border border-white/5 p-4 rounded-xl bg-black/20 print:border-slate-300 print:bg-slate-50 print:text-black">
-            <div className="flex justify-between border-b border-white/5 pb-1 print:border-slate-200">
-              <span className="text-slate-400 print:text-slate-500">Spare Parts Cost</span>
-              <span className="font-semibold">{formatINR(costs.parts)}</span>
-            </div>
-            <div className="flex justify-between border-b border-white/5 pb-1 print:border-slate-200">
-              <span className="text-slate-400 print:text-slate-500">Labour / Labor Charges</span>
-              <span className="font-semibold">{formatINR(costs.labour)}</span>
-            </div>
-            <div className="flex justify-between border-b border-white/5 pb-1 print:border-slate-200">
-              <span className="text-slate-400 print:text-slate-500">Refinishing / Paint Cost</span>
-              <span className="font-semibold">{formatINR(costs.paint)}</span>
-            </div>
-            <div className="flex justify-between border-b border-white/5 pb-1 print:border-slate-200">
-              <span className="text-slate-400 print:text-slate-500">GST Tax (18% Rate)</span>
-              <span className="font-semibold">{formatINR(costs.gst)}</span>
-            </div>
-            <div className="flex justify-between text-white print:text-brand-indigo font-bold text-sm pt-1.5">
-              <span>Grand Total Estimate</span>
-              <span>{formatINR(costs.total)}</span>
-            </div>
+        <div className="space-y-1.5 border border-white/5 p-4 rounded-xl bg-black/20 print:border-slate-300 print:bg-slate-50 print:text-black">
+          <div className="flex justify-between border-b border-white/5 pb-1 print:border-slate-200">
+            <span className="text-slate-400 print:text-slate-500">Spare Parts Cost</span>
+            <span className="font-semibold">{formatINR(costs.parts)}</span>
+          </div>
+          <div className="flex justify-between border-b border-white/5 pb-1 print:border-slate-200">
+            <span className="text-slate-400 print:text-slate-500">Labour / Labor Charges</span>
+            <span className="font-semibold">{formatINR(costs.labour)}</span>
+          </div>
+          <div className="flex justify-between border-b border-white/5 pb-1 print:border-slate-200">
+            <span className="text-slate-400 print:text-slate-500">Refinishing / Paint Cost</span>
+            <span className="font-semibold">{formatINR(costs.paint)}</span>
+          </div>
+          <div className="flex justify-between border-b border-white/5 pb-1 print:border-slate-200">
+            <span className="text-slate-400 print:text-slate-500">GST Tax (18% Rate)</span>
+            <span className="font-semibold">{formatINR(costs.gst)}</span>
+          </div>
+          <div className="flex justify-between text-white print:text-brand-indigo font-bold text-sm pt-1.5">
+            <span>Grand Total Estimate</span>
+            <span>{formatINR(costs.total)}</span>
           </div>
         </div>
 
-        <div className="lg:col-span-5 space-y-2">
+        <div className="space-y-2">
           <span className="block text-[8px] text-slate-500 uppercase font-bold print:text-slate-600">Itemized Damage & Parts</span>
-          <div className="space-y-2 max-h-[280px] overflow-auto pr-1">
-            {(costs.items || []).length === 0 ? (
-              <div className="rounded-xl border border-white/5 bg-black/20 p-4 text-xs text-slate-400 print:border-slate-300 print:bg-slate-50 print:text-slate-700">
-                No damaged part breakdown available for this inspection.
+          {(costs.items || []).length === 0 ? (
+            <div className="rounded-xl border border-white/5 bg-black/20 p-4 text-xs text-slate-400 print:border-slate-300 print:bg-slate-50 print:text-slate-700">
+              No damaged part breakdown available for this inspection.
+            </div>
+          ) : (
+            <div className="overflow-hidden rounded-xl border border-white/5 bg-black/20 print:border-slate-300 print:bg-slate-50">
+              <div className="grid grid-cols-12 gap-2 border-b border-white/5 px-3 py-2 text-[9px] font-bold uppercase tracking-wider text-slate-500 print:border-slate-200 print:text-slate-600">
+                <span className="col-span-3">Part</span>
+                <span className="col-span-5">Damage</span>
+                <span className="col-span-1 text-right">P</span>
+                <span className="col-span-1 text-right">L</span>
+                <span className="col-span-1 text-right">Paint</span>
+                <span className="col-span-1 text-right">Sub</span>
               </div>
-            ) : (
-              costs.items!.map((item) => (
-                <div key={item.part} className="rounded-xl border border-white/5 bg-black/20 p-3 text-[10px] font-mono print:border-slate-300 print:bg-slate-50 print:text-black">
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="font-bold uppercase text-slate-200 print:text-black">{item.part}</span>
-                    <span className="rounded-full border border-white/10 px-2 py-0.5 text-[9px] text-slate-300 print:border-slate-300 print:text-slate-700">{item.severity}</span>
+              <div className="divide-y divide-white/5 print:divide-slate-200">
+                {costs.items!.map((item) => (
+                  <div key={item.part} className="grid grid-cols-12 gap-2 px-3 py-3 text-[10px] font-mono">
+                    <div className="col-span-3">
+                      <div className="font-bold uppercase text-slate-200 print:text-black">{item.part}</div>
+                      <div className="mt-0.5 text-[9px] text-slate-500 print:text-slate-600">{item.severity}</div>
+                    </div>
+                    <div className="col-span-5 text-slate-300 print:text-slate-700 leading-snug">{item.damage}</div>
+                    <div className="col-span-1 text-right font-semibold">{formatINR(item.parts)}</div>
+                    <div className="col-span-1 text-right font-semibold">{formatINR(item.labour)}</div>
+                    <div className="col-span-1 text-right font-semibold">{formatINR(item.paint)}</div>
+                    <div className="col-span-1 text-right font-semibold">{formatINR(item.subtotal)}</div>
                   </div>
-                  <p className="mt-1 text-slate-400 print:text-slate-600">{item.damage}</p>
-                  <div className="mt-2 grid grid-cols-4 gap-2 text-[9px]">
-                    <div><span className="block text-slate-500">Parts</span><span className="font-bold">{formatINR(item.parts)}</span></div>
-                    <div><span className="block text-slate-500">Labour</span><span className="font-bold">{formatINR(item.labour)}</span></div>
-                    <div><span className="block text-slate-500">Paint</span><span className="font-bold">{formatINR(item.paint)}</span></div>
-                    <div><span className="block text-slate-500">Subtotal</span><span className="font-bold">{formatINR(item.subtotal)}</span></div>
-                  </div>
-                </div>
-              ))
-            )}
-          </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Dynamic Repair Timeline */}
-        <div className="lg:col-span-12 rounded-xl border border-white/5 p-4 bg-black/20 flex flex-col justify-center space-y-3 print:border-slate-300 print:bg-slate-50 print:text-black">
+        <div className="rounded-xl border border-white/5 p-4 bg-black/20 space-y-3 print:border-slate-300 print:bg-slate-50 print:text-black">
           <span className="block text-[8px] text-slate-500 uppercase font-bold print:text-slate-600">Repair Timeline Details</span>
           <div className="grid grid-cols-2 gap-3 text-xs">
             <div>
