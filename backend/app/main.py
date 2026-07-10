@@ -776,8 +776,9 @@ class RepairCostEngine:
         is_damaged: bool
     ) -> dict:
         cost_breakdown = {"parts": 0, "labour": 0, "paint": 0, "gst": 0, "total": 0}
+        repair_items = []
         if not is_damaged or category == "none":
-            return cost_breakdown
+            return {**cost_breakdown, "items": repair_items}
 
         database = {
             "scratch": {"parts": 0, "labour": 2000, "paint": 3000},
@@ -785,6 +786,34 @@ class RepairCostEngine:
             "bumper": {"parts": 9500, "labour": 3000, "paint": 4000},
             "glass": {"parts": 12000, "labour": 2500, "paint": 0},
             "damage": {"parts": 4000, "labour": 3000, "paint": 3500}
+        }
+
+        item_map = {
+            "scratch": [
+                {"part": "paint_condition", "damage": "Clear coat and top-layer paint abrasion", "weight": 0.55},
+                {"part": "body_panel", "damage": "Visible surface scoring on exposed panel", "weight": 0.25},
+                {"part": "side_mirror", "damage": "Mirror housing scuffing or edge scrape", "weight": 0.20},
+            ],
+            "dent": [
+                {"part": "body_panel", "damage": "Sheet metal indentation / panel deformation", "weight": 0.55},
+                {"part": "panel_alignment", "damage": "Door / quarter panel seam misalignment", "weight": 0.25},
+                {"part": "bumper", "damage": "Localized bumper push-in or clip stress", "weight": 0.20},
+            ],
+            "bumper": [
+                {"part": "bumper", "damage": "Impact compression, clip damage, or plastic deformation", "weight": 0.65},
+                {"part": "panel_alignment", "damage": "Nearby mounting and seam alignment shift", "weight": 0.20},
+                {"part": "electrical_marker", "damage": "Sensor / parking marker disturbance near bumper area", "weight": 0.15},
+            ],
+            "glass": [
+                {"part": "windshield_glass", "damage": "Chip, crack propagation, or fracture pattern on glass", "weight": 0.70},
+                {"part": "wiper_blade", "damage": "Potential wiper contact damage or sweep interference", "weight": 0.15},
+                {"part": "electrical_marker", "damage": "Camera / sensor alignment check required near glass area", "weight": 0.15},
+            ],
+            "damage": [
+                {"part": "body_panel", "damage": "General exterior body panel damage", "weight": 0.45},
+                {"part": "paint_condition", "damage": "Paint loss, abrasion, or finish degradation", "weight": 0.30},
+                {"part": "panel_alignment", "damage": "Panel seam or mounting misalignment", "weight": 0.25},
+            ],
         }
 
         rates = database.get(category, database["damage"])
@@ -803,12 +832,30 @@ class RepairCostEngine:
         gst_amt = int(subtotal * 0.18)
         total_cost = subtotal + gst_amt
 
+        line_items = item_map.get(category, item_map["damage"])
+        for entry in line_items:
+            line_weight = entry["weight"]
+            line_parts = int(round(parts_cost * line_weight))
+            line_labour = int(round(labour_cost * line_weight))
+            line_paint = int(round(paint_cost * line_weight))
+            line_subtotal = line_parts + line_labour + line_paint
+            repair_items.append({
+                "part": entry["part"],
+                "damage": entry["damage"],
+                "severity": severity,
+                "parts": line_parts,
+                "labour": line_labour,
+                "paint": line_paint,
+                "subtotal": line_subtotal,
+            })
+
         return {
             "parts": parts_cost,
             "labour": labour_cost,
             "paint": paint_cost,
             "gst": gst_amt,
-            "total": total_cost
+            "total": total_cost,
+            "items": repair_items
         }
 
 class HealthScoreEngine:
@@ -1200,6 +1247,7 @@ async def analyze_vehicle(
                 "health_details": health_details,
                 "severity": severity,
                 "repair_costs": cost_breakdown,
+                "repair_items": cost_breakdown.get("items", []),
                 "repair_timeline": {
                   "working_hours": working_hours,
                   "repair_days": repair_days,
