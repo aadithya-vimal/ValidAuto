@@ -8,6 +8,15 @@ interface CostData {
   paint: number;
   gst: number;
   total: number;
+  items?: Array<{
+    part: string;
+    damage: string;
+    severity: string;
+    parts: number;
+    labour: number;
+    paint: number;
+    subtotal: number;
+  }>;
 }
 
 interface TimelineData {
@@ -41,7 +50,7 @@ export default function InvoiceBreakdown({ costs, timeline }: InvoiceBreakdownPr
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
         {/* Cost Invoice Table */}
-        <div className="lg:col-span-8 space-y-2 font-mono text-xs">
+        <div className="lg:col-span-7 space-y-2 font-mono text-xs">
           <div className="space-y-1.5 border border-white/5 p-4 rounded-xl bg-black/20 print:border-slate-300 print:bg-slate-50 print:text-black">
             <div className="flex justify-between border-b border-white/5 pb-1 print:border-slate-200">
               <span className="text-slate-400 print:text-slate-500">Spare Parts Cost</span>
@@ -66,8 +75,35 @@ export default function InvoiceBreakdown({ costs, timeline }: InvoiceBreakdownPr
           </div>
         </div>
 
+        <div className="lg:col-span-5 space-y-2">
+          <span className="block text-[8px] text-slate-500 uppercase font-bold print:text-slate-600">Itemized Damage & Parts</span>
+          <div className="space-y-2 max-h-[280px] overflow-auto pr-1">
+            {(costs.items || []).length === 0 ? (
+              <div className="rounded-xl border border-white/5 bg-black/20 p-4 text-xs text-slate-400 print:border-slate-300 print:bg-slate-50 print:text-slate-700">
+                No damaged part breakdown available for this inspection.
+              </div>
+            ) : (
+              costs.items!.map((item) => (
+                <div key={item.part} className="rounded-xl border border-white/5 bg-black/20 p-3 text-[10px] font-mono print:border-slate-300 print:bg-slate-50 print:text-black">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="font-bold uppercase text-slate-200 print:text-black">{item.part}</span>
+                    <span className="rounded-full border border-white/10 px-2 py-0.5 text-[9px] text-slate-300 print:border-slate-300 print:text-slate-700">{item.severity}</span>
+                  </div>
+                  <p className="mt-1 text-slate-400 print:text-slate-600">{item.damage}</p>
+                  <div className="mt-2 grid grid-cols-4 gap-2 text-[9px]">
+                    <div><span className="block text-slate-500">Parts</span><span className="font-bold">{formatINR(item.parts)}</span></div>
+                    <div><span className="block text-slate-500">Labour</span><span className="font-bold">{formatINR(item.labour)}</span></div>
+                    <div><span className="block text-slate-500">Paint</span><span className="font-bold">{formatINR(item.paint)}</span></div>
+                    <div><span className="block text-slate-500">Subtotal</span><span className="font-bold">{formatINR(item.subtotal)}</span></div>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+
         {/* Dynamic Repair Timeline */}
-        <div className="lg:col-span-4 rounded-xl border border-white/5 p-4 bg-black/20 flex flex-col justify-center space-y-3 print:border-slate-300 print:bg-slate-50 print:text-black">
+        <div className="lg:col-span-12 rounded-xl border border-white/5 p-4 bg-black/20 flex flex-col justify-center space-y-3 print:border-slate-300 print:bg-slate-50 print:text-black">
           <span className="block text-[8px] text-slate-500 uppercase font-bold print:text-slate-600">Repair Timeline Details</span>
           <div className="grid grid-cols-2 gap-3 text-xs">
             <div>
